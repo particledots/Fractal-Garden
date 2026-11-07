@@ -15,6 +15,15 @@
 // Milestone 5: the clock also gets the Mod mode and is told to send CC 84 (slew) and CC 1 (mod) next to the notes; the CC messages
 // are added to the output in the clock's order (CC before the note it belongs to). SHRINK and EXPAND (Resize) are counted and carried
 // out like ROTATE, and they also set LENGTH.
+// Milestones 6 and 7: BRANCH, PATH, MUTATE, the three MICRO knobs, RESEED (seven buttons) and UNMUTATE.
+//  - The audio thread plays the trunk and the branches, and Mutate / Micro Mutate change the trunk copy it plays. Each change to a trunk
+//    step is handed to the window thread through a small queue; the window thread (the 20-a-second timer) writes it into the saved steps.
+//    A change carries the "epoch" (the edit count the audio thread had copied); one made before an edit is dropped, so a mutation never
+//    overwrites something you have just edited.
+//  - EDITS (a step edited in the window, LENGTH changed by hand or automation) set the UNMUTATE point and the branch snapshot. ROTATE,
+//    TRANSPOSE and RESIZE change the branch snapshot but not the UNMUTATE point. RESEED (not BRANCHES) and Mutate change neither.
+//  - UNMUTATE puts the steps and LENGTH back to the UNMUTATE point and rebuilds the branches from it. RESEED: BRANCHES takes a new branch
+//    seed and a fresh snapshot of the trunk as it is now.
 // Then the button is switched off again a few times a second ("act, then pop back"). A project saved while one was on opens with all
 // of them off and none of them acts on loading.
 //
@@ -68,7 +77,12 @@ public:
     void rotateTrunk (int direction);                       // +1 RIGHT / -1 LEFT: the first LENGTH steps move one place, for good
     void transposeTrunk (int scaleSteps);                   // +1 UP / -1 DOWN: the first LENGTH steps move one scale step, for good
     void resizeTrunk (int direction);                       // -1 SHRINK / +1 EXPAND: the trunk becomes half / twice as long (LENGTH follows), for good
-    int getStepsRevision() const { return stepsRevision.load(); }   // goes up whenever the steps change (the window repaints on it)
+    int getStepsRevision() const { return stepsRevision.load() + mutationRevision.load(); }   // goes up whenever the steps change (the window repaints on it)
+
+    // ---- branches (read-only, for the TREE) ----
+    struct BranchView { int count = 0; int path = 0; std::uint32_t seed = 1; };
+    BranchView getBranchView() const;
+    void unmutate();                                        // back to the state after the last manual edit (the UNMUTATE button)
 
     // ---- editor choices (saved in the plugin state) ----
     int getEditorTab() const;
@@ -94,6 +108,7 @@ public:
         int step = -1;                          // 0 to 63 while running, else -1
         bool gate = false;                      // a note is sounding
         std::uint32_t stepCount = 0, noteCount = 0;     // go up at every step / every note (the window flashes the lights on a change)
+        int section = -1;                       // 0 = the trunk is playing, 1 to 7 = that branch, -1 when not running
     };
     PlayerView getPlayerView() const;
 
@@ -103,7 +118,16 @@ private:
     void switchOff (const char* parameterId);
     void applyPendingButtons();
     void saveStepsToState();
+    void saveStepsQuietly();                    // saves mutated steps without telling the audio thread to copy them again
     void loadStepsFromState();
+    void markEdit();                            // a manual edit: the UNMUTATE point and the branch snapshot become the steps as they are now
+    void renewBranches();                       // the branches are made again from the steps as they are now
+    void reseed (fg::ReseedKind);
+    void reseedBranches();
+    void drainMutations();
+    void saveUndoToState();
+    void loadUndoFromState();
+    void setLengthQuietly (int length);         // sets LENGTH without it counting as an edit
     void releaseEverything (juce::MidiBuffer& out);     // note-offs for whatever this plugin has started (bypass)
 
     juce::AudioProcessorValueTreeState apvts;
@@ -111,6 +135,14 @@ private:
     mutable juce::CriticalSection stepLock;
     fg::StepData steps;
     std::atomic<int> stepsRevision { 0 };
+    std::atomic<int> mutationRevision { 0 };
+    fg::StepData undoSteps, branchSource;                       // guarded by stepLock
+    int undoLength = 8;
+    std::atomic<int> branchRevision { 0 };
+    std::atomic<std::uint32_t> branchSeed { 1 };
+    std::atomic<int> lastLengthSeen { 8 };
+    std::atomic<bool> lengthEditPending { false };
+    fg::Rng reseedRng;
 
     std::atomic<bool> switchTransientButtonsOff { false };      // set when a saved project is loaded
 
@@ -131,6 +163,13 @@ private:
     std::atomic<float>* rootParam = nullptr;
     std::atomic<float>* orderParam = nullptr;
     std::atomic<float>* modModeParam = nullptr;
+    std::atomic<float>* branchParam = nullptr;
+    std::atomic<float>* pathParam = nullptr;
+    std::atomic<float>* mutateParam = nullptr;
+    std::atomic<float>* microRatchetParam = nullptr;
+    std::atomic<float>* microSlewParam = nullptr;
+    std::atomic<float>* microModParam = nullptr;
+    std::atomic<float>* reseedScopeParam = nullptr;
     std::atomic<float>* pendRepeatParam = nullptr;
     std::atomic<float>* chanceParams[fg::ChanceMix::kNumModes] = {};
     std::atomic<float>* chanceRunMinParam = nullptr;
@@ -140,6 +179,15 @@ private:
     std::atomic<std::uint32_t> resetCount { 0 };                // goes up at every press of RESET
     std::atomic<int> pendingRotateLeft { 0 }, pendingRotateRight { 0 }, pendingTransposeUp { 0 }, pendingTransposeDown { 0 };
     std::atomic<int> pendingShrink { 0 }, pendingExpand { 0 };
+    std::atomic<int> pendingUnmutate { 0 }, pendingReseedAll { 0 }, pendingReseedBranches { 0 }, pendingReseedNote { 0 }, pendingReseedGate { 0 },
+                     pendingReseedSlew { 0 }, pendingReseedRatchet { 0 }, pendingReseedMod { 0 };
+
+    // changes the audio thread made to trunk steps, waiting for the window thread
+    static constexpr int kMutationQueue = 1024;
+    juce::AbstractFifo mutationFifo { kMutationQueue };
+    fg::MutationEvent mutationBuffer[kMutationQueue];
+    fg::StepData audioBranchSource;
+    int audioBranchRevision = -1;
     fg::NoteEvent events[kMaxEvents];
     juce::MidiBuffer outBuffer;
     std::atomic<double> sampleRate { 44100.0 };

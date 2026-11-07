@@ -4,8 +4,8 @@ An original AU / VST3 **MIDI effect** for Logic Pro, inspired by the feel of a E
 sequencer (the Qu-Bit Electronix Bloom v2): 64 steps, branches that grow from a trunk, and knobs that mutate the pattern. All code is
 our own; it is not a port or copy of anything, and it is not affiliated with Qu-Bit Electronix.
 
-**Status: version 0.5.0 (milestone 5: gate length with ties, ratchet, slew, mod and resize). Tested in Logic on 7 November 2026: Bryn reported "all good", and it is finished.** Milestone 4 (0.4.0) was tested in Logic on 7 November 2026: everything worked as expected and as described, and it is finished.
-**The trunk now plays with gate lengths and ties, ratchets, slew and the Mod output.** Gate Length (5 % to 100 %; 100 % ties to the next step), Ratchet (x1 x2 x3 x4 x6 x8 x16 x32), Slew (sent as MIDI CC 84), Mod (four modes, sent as CC 1, at most 100 CC messages a second) and the Resize buttons (SHRINK / EXPAND) work. Branches, Path and Mutate still only move and are saved; they start working in later milestones.
+**Status: version 0.6.0 (milestones 6 and 7 merged: Branch, Path, Mutate, Micro Mutate, Reseed, Unmutate and the TREE letters). Built and checked automatically; waiting for the Logic test.** Milestone 5 (0.5.0) was tested in Logic on 7 November 2026: Bryn reported "all good", and it is finished. Milestone 4 (0.4.0) was tested in Logic on 7 November 2026: everything worked as expected and as described, and it is finished.
+**The pattern now grows.** After the trunk, up to 7 branches play (each made from the one before by Reverse, Inverse, Transpose, Mutate or Randomize), Path picks one of up to 128 paths, the Mutate and Micro Mutate knobs change the steps as they play, the seven Reseed buttons throw new dice, and Unmutate takes the pattern back to your last edit. Performance mode (milestone 8) and the settings page are still to come.
 
 ## First five minutes (after installing, see *Getting the plugin*)
 
@@ -37,7 +37,7 @@ The step editor (tabs, Mod Out chips, page chips, an overview of all 64 steps, e
 - **RESET** makes the next step that plays step 1 of the order, and the pattern goes on from there. It re-locks to Logic's bars when Logic stops, jumps or cycles. Pressed while Logic is stopped it does nothing.
 - **Page chips.** Pages beyond LENGTH are greyed and cannot be clicked; if LENGTH shrinks, the page moves down to the last page LENGTH reaches. Steps beyond LENGTH cannot be edited.
 - Loading a project is never counted as a button press.
-- The 12 buttons still to come (Reseed, Unmutate, Resize, Pattern Load / Save and so on) **do nothing yet**: they glow briefly and pop back off.
+- The buttons still to come (Pattern Load / Save and so on) **do nothing yet**: they glow briefly and pop back off.
 - **Where the Bloom v2 manual is vague, and what we did (approximations):** the manual's pictures of Converge, Diverge and Converge & Diverge did not come out as text, so the shapes above are our reading of its words. Page Jump is only described loosely; ours is pages of eight, random page each visit (the last page plays round inside its own steps if shorter than eight). The manual's "Random" (no step twice in a row until all are played) matches our Random no-repeat; our Random order is the simple one that may repeat. ROOT's range and edge behaviour are not given (we clamp to MIDI 0 to 127). ROTATE's wording is "moves the start point": we move the data inside LENGTH. RESET's exact timing is not given: we use "next step is step 1".
 - The ranges of Gate, Slew, Ratchet and Mod, the eight Mod captions, and the wording under each knob are **first guesses**; where the Bloom v2 manual is vague (for example the exact Performance zones) we approximate and will tune it with you.
 - Window and tab choices are saved in the project but are not controls (no automation).
@@ -52,7 +52,22 @@ The step editor (tabs, Mod Out chips, page chips, an overview of all 64 steps, e
 - **Where the Bloom v2 manual is vague, and what we did:** every instance is listed with a number in the file "Fractal-Garden manual gaps ledger" in the project (G-34 onwards are new in this milestone).
 - Older saved projects open: step data format version 3 converts versions 1 and 2 on load (old ratchet counts go to the nearest amount of the list; old Mod rates to the nearest of the 16).
 
+## New in 0.6.0 (how it behaves)
+
+- **Branch and Path.** BRANCH 0 to 7 (the knob is rounded to a whole number). The loop is the trunk, then branch 1, branch 2 and so on, each as long as LENGTH, then the trunk again. Each branch is made from the one before it (branch 1 from the trunk) by one of five changes: **R** Reverse (steps backwards), **I** Inverse (every note mirrored around the trunk's first note), **T** Transpose (up by 1 scale step to a whole octave), **M** Mutate (about 60 % of notes and 25 % of gates mutated) or **?** Randomize (new random notes, about 20 % rests, random gate lengths; slew, ratchet and Mod are copied). PATH picks one of 2 to the power of BRANCH paths: at every level there are two variants (always different from each other) and the path chooses one per level. The same BRANCH, PATH and seed always give the same branches. The seed is saved with the project; RESEED: BRANCHES makes a new one.
+- **Branches are made from the pattern as you last edited it.** Editing a step, changing LENGTH by hand, ROTATE, TRANSPOSE and RESIZE make the branches again. Mutate does **not**: it changes the trunk as it plays and the branches stay as they were.
+- **TREE.** The letters under the tree show what each branch of the current path did. The teal playhead and the header (STEP n/LENGTH ... TRUNK or BRANCH n) tell you which part is playing; the step editor's playhead shows the trunk only.
+- **Mutate (default mode).** The step is changed as it starts, then it plays, and the change is kept (saved with the project). Knob 0 to the middle: only notes change, the chance rising from 0 to 100 %. Middle to full: notes at a fixed 75 %, and a gate change at 0 to 100 %, which 7 times in 10 gives a new gate length and 3 times in 10 switches the step on or off. A note moves 1, 2 or 3 scale steps (50 / 30 / 20 %), one time in five by a whole octave. The knobs act whichever Knob Mode is showing.
+- **Micro Mutate.** Micro Ratchet, Micro Slew and Micro Mod: each knob is the chance, from none at the left to every step at the right, that the step gets a new ratchet, slew amount or Mod value (a new shape in Shapes mode) as it starts.
+- **Reseed.** ALL, NOTE, GATE, SLEW, RATCHET, MOD give new random values to the page the editor shows (SCOPE: PAGE) or to all 64 steps (SCOPE: ALL 64). BRANCHES gives the branches a new seed. Ranges are in the ledger.
+- **Unmutate.** Puts the steps (and LENGTH) back to the state of your last edit. It undoes Mutate, Micro Mutate, Rotate, Transpose, Resize and Reseed. It does not undo RESEED: BRANCHES. A manual edit (a step, or LENGTH by hand) sets a new point, and the earlier ones can no longer be undone.
+- **Where the Bloom v2 manual is vague, and what we did:** the manual gaps ledger rows G-64 onward are new in this milestone, and G-01 to G-04, G-07, G-14, G-16, G-18 and G-33 changed from LATER to BUILT.
+- Older saved projects open: they get a branch seed, and Unmutate has nothing to go back to until you edit something.
+- No new controls; all 46 ids unchanged.
+
 ## What has been checked
+
+- Version 0.6.0 automatic checks: engine 166,852; clock 1,002,437; window and plugin test 333 (branches and Path in the playing plugin, Mutate saved into the steps, Micro Mutate, every Reseed button and both scopes, Unmutate after each of them and after Rotate / Transpose / Resize, what sets the Unmutate point, saving and loading, TREE letters). With BRANCH 0 and the Mutate knobs at 0 the note and CC stream is identical to 0.5.0 (compared byte for byte). The GitHub run result is in the CHANGELOG. Not yet tested in Logic.
 
 - Version 0.5.0 automatic checks: engine 2,111; clock 1,002,337 (ties, every ratchet amount at several block sizes, CC 84 and CC 1 values and order, all four Mod modes, the 100 a second cap, identical output for block sizes 1 to 8192, stop / start). The GitHub run result is in the CHANGELOG. Tested in Logic on 7 November 2026: all good (reported as "all good" without a per-item list).
 - Earlier (0.4.0): engine self-test: 1,214 checks (control table, menus, the 28 scales and pitch, step data save / load, reading old 0.2.0 / 0.3.0 data, rotate, transpose, all eleven orders: shapes, repeat, determinism and seeds).

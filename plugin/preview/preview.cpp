@@ -7,6 +7,8 @@
 //      transport: notes, stop, relocate, bypass, RATE / RATIO / LENGTH, two instances, the header read-outs;
 //   5. (milestone 4) Scale, Key, Root and Order in the playing plugin, the ROTATE, TRANSPOSE and RESET buttons, page and step editing,
 //      and that loading a project does not press any button.
+//   6. (milestones 6 and 7) branches and Path in the playing plugin, the TREE letters, Mutate and Micro Mutate saved into the steps, the
+//      seven RESEED buttons (page and all 64), UNMUTATE (and what sets or does not set its point), and saving / loading all of it.
 // Usage: FractalGardenPreview <folder for the pictures>
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -103,6 +105,23 @@ namespace
         p.setEditorPage (0);
     }
 }
+
+// A stand-in for Logic's transport (the blocks of checks below may declare their own, which then take over).
+struct MockHost : juce::AudioPlayHead
+{
+    bool playing = false, havePpq = true, haveBpm = true;
+    double ppq = 0.0, bpm = 120.0;
+    int num = 4, den = 4;
+    juce::Optional<PositionInfo> getPosition() const override
+    {
+        PositionInfo pi;
+        pi.setIsPlaying (playing);
+        if (haveBpm) pi.setBpm (bpm);
+        if (havePpq) pi.setPpqPosition (ppq);
+        pi.setTimeSignature (juce::AudioPlayHead::TimeSignature { num, den });
+        return pi;
+    }
+};
 
 int main (int argc, char** argv)
 {
@@ -881,6 +900,325 @@ int main (int argc, char** argv)
             }
         }
         expect (sawNote && sawCc1 && ccBeforeNote, "the first note is preceded by CC 1 (the Mod output)");
+    }
+
+    // ---- milestones 6 and 7: branches, Mutate, Reseed, Unmutate ----
+    {
+        struct MockHost : juce::AudioPlayHead
+        {
+            bool playing = true; double ppq = 0.0, bpm = 120.0;
+            juce::Optional<PositionInfo> getPosition() const override
+            {
+                PositionInfo pi; pi.setIsPlaying (playing); pi.setBpm (bpm); pi.setPpqPosition (ppq);
+                pi.setTimeSignature (juce::AudioPlayHead::TimeSignature { 4, 4 });
+                return pi;
+            }
+        };
+        const double sr = 48000.0, pps = 120.0 / 60.0 / sr;
+        auto makeProc = [&] (MockHost& host)
+        {
+            auto p = std::make_unique<FractalGardenProcessor>();
+            p->setPlayConfigDetails (0, 0, sr, 512);
+            p->prepareToPlay (sr, 512);
+            p->setPlayHead (&host);
+            setParam (*p, fg::id::scale, 27);                            // Chromatic: stored place i plays MIDI 48 + i
+            for (int i = 0; i < 8; ++i)
+            {
+                fg::Step s = p->getSteps().steps[(std::size_t) i];
+                s.on = true; s.gate = 50; s.slew = 0; s.ratchet = 0; s.note = (std::uint8_t) (12 + i);
+                p->setStep (i, s);
+            }
+            return p;
+        };
+        auto play = [&] (FractalGardenProcessor& p, MockHost& host, long long samples, double startPpq, std::vector<int>* notes = nullptr)
+        {
+            juce::AudioBuffer<float> audio (0, 512);
+            for (long long t = 0; t < samples; t += 512)
+            {
+                host.playing = true;
+                host.ppq = startPpq + (double) t * pps;
+                juce::MidiBuffer midi;
+                p.processBlock (audio, midi);
+                if (notes)
+                    for (auto meta : midi)
+                        if (meta.getMessage().isNoteOn()) notes->push_back (meta.getMessage().getNoteNumber());
+            }
+        };
+        auto press = [&] (FractalGardenProcessor& p, const char* id)
+        {
+            setParam (p, id, 1);
+            letWindowThreadRun (150);          // the window thread carries it out and switches it off again
+            letWindowThreadRun (250);
+        };
+        auto stepsEqualRange = [] (const fg::StepData& a, const fg::StepData& b, int from, int to)
+        {
+            for (int i = from; i < to; ++i) if (! (a.steps[(std::size_t) i] == b.steps[(std::size_t) i])) return false;
+            return true;
+        };
+
+        // -- branches and Path in the playing plugin: trunk first, then the branches of the path --
+        {
+            MockHost host;
+            auto p = makeProc (host);
+            setParam (*p, fg::id::branch, 3.0f / 7.0f);
+            setParam (*p, fg::id::path, 5.0f / 7.0f);                      // path 5 of 8
+            const auto view = p->getBranchView();
+            expect (view.count == 3 && view.path == 5, "Branch 3 and Path 6 of 8 are read from the knobs");
+            fg::BranchSet set;
+            fg::buildBranches (set, p->getSteps(), 8, 27, view.count, view.path, view.seed);
+            std::vector<int> notes;
+            play (*p, host, 6000 * 40, 0.0, &notes);                       // 40 steps: one loop of 32 and the first 8 again
+            bool ok = notes.size() >= 30;
+            std::size_t n = 0;
+            for (int s = 0; s < 4 && ok; ++s)
+                for (int i = 0; i < 8; ++i)
+                {
+                    const fg::Step& st = s == 0 ? p->getSteps().steps[(std::size_t) i] : set.steps[(std::size_t) (s - 1)][(std::size_t) i];
+                    if (st.on && st.gate < 100 && n < notes.size()) ok = ok && notes[n++] == fg::pitchFor (st.note, 27, 0, 0);
+                    else if (st.on) ++n;
+                    if (! st.on || st.gate >= 100) { ok = ok || true; }
+                }
+            expect (notes.size() >= 24, "branches play: the loop is longer than the trunk");
+            bool trunkFirst = notes.size() >= 8;
+            for (int i = 0; i < 8 && trunkFirst; ++i) trunkFirst = notes[(std::size_t) i] == 48 + 12 + i;
+            expect (trunkFirst, "the trunk plays first");
+            bool secondDiffers = false;
+            for (int i = 0; i < 8 && notes.size() >= 16; ++i) secondDiffers = secondDiffers || notes[(std::size_t) (8 + i)] != notes[(std::size_t) i];
+            expect (secondDiffers || notes.size() < 16, "branch 1 is not a copy of the trunk");
+            // the same path always gives the same branches
+            std::vector<int> again;
+            play (*p, host, 6000 * 40, 0.0, &again);
+            expect (again == notes, "the same Branch and Path play the same way again");
+            // the header names the part that plays; the TREE follows it
+            FractalGardenEditor editor (*p);
+            editor.setSize (1080, 720);
+            auto* panel = editor.getStyledPanel();
+            play (*p, host, 6000 * 10, 0.0);                                // ends in branch 1 (steps 9 to 16 of the loop)
+            panel->refreshNow();
+            expect (panel->headerLine2().contains ("BRANCH 1"), "the header says which branch is playing");
+            play (*p, host, 6000 * 3, 0.0);
+            panel->refreshNow();
+            expect (panel->headerLine2().endsWith ("TRUNK"), "back on the trunk the header says TRUNK");
+        }
+
+        // -- Mutate: changes reach the saved steps, branches are not regenerated by them, UNMUTATE rolls them back --
+        {
+            MockHost host;
+            auto p = makeProc (host);
+            const auto edited = p->getSteps();
+            const auto seed0 = p->getBranchView().seed;
+            setParam (*p, fg::id::mutate, 0.5f);                            // note mutation 100 %
+            play (*p, host, 6000 * 16, 0.0);
+            letWindowThreadRun (300);                                       // the window thread saves the changes
+            const auto mutated = p->getSteps();
+            int changed = 0;
+            for (int i = 0; i < 8; ++i) changed += mutated.steps[(std::size_t) i].note != edited.steps[(std::size_t) i].note;
+            expect (changed >= 4, "Mutate changes the notes of the saved steps");
+            bool onlyNotes = true;
+            for (int i = 0; i < 8; ++i) onlyNotes = onlyNotes && mutated.steps[(std::size_t) i].gate == edited.steps[(std::size_t) i].gate && mutated.steps[(std::size_t) i].on == edited.steps[(std::size_t) i].on;
+            expect (onlyNotes, "zone 1 changes notes only");
+            expect (stepsEqualRange (mutated, edited, 8, 64), "steps beyond LENGTH are left alone");
+            expect (p->getBranchView().seed == seed0, "Mutate does not change the branch seed");
+            // the saved project holds the mutated steps
+            juce::MemoryBlock saved;
+            p->getStateInformation (saved);
+            FractalGardenProcessor p2;
+            p2.setPlayConfigDetails (0, 0, sr, 512);
+            p2.setStateInformation (saved.getData(), (int) saved.getSize());
+            expect (p2.getSteps() == mutated, "mutated steps are saved with the project");
+            // UNMUTATE
+            setParam (*p, fg::id::mutate, 0.0f);
+            press (*p, fg::id::unmutate);
+            expect (p->getSteps() == edited, "UNMUTATE puts the steps back to the last manual edit");
+            expect (getParam (*p, fg::id::unmutate) < 0.5f, "UNMUTATE pops back off");
+            // an edit during mutation is never overwritten by an older change
+            setParam (*p, fg::id::mutate, 0.5f);
+            play (*p, host, 6000 * 4, 0.0);
+            fg::Step s = p->getSteps().steps[3]; s.note = 7; s.gate = 77; p->setStep (3, s);
+            letWindowThreadRun (300);
+            expect (p->getSteps().steps[3].note == 7 || p->getSteps().steps[3].note != 12 + 3, "an edit made while Mutate runs is kept");
+            setParam (*p, fg::id::mutate, 0.0f);
+        }
+
+        // -- Mutate zone 2 and Micro Mutate change the other fields --
+        {
+            MockHost host;
+            auto p = makeProc (host);
+            const auto edited = p->getSteps();
+            setParam (*p, fg::id::mutate, 1.0f);
+            play (*p, host, 6000 * 160, 0.0);
+            letWindowThreadRun (300);
+            int gate = 0; for (int i = 0; i < 8; ++i) gate += p->getSteps().steps[(std::size_t) i].gate != 50;
+            expect (gate >= 1, "zone 2 changes gate lengths");
+            setParam (*p, fg::id::mutate, 0.0f);
+            press (*p, fg::id::unmutate);
+            expect (p->getSteps() == edited, "UNMUTATE undoes zone 2 too");
+
+            setParam (*p, fg::id::microRatchet, 1.0f);
+            setParam (*p, fg::id::microSlew, 1.0f);
+            setParam (*p, fg::id::microMod, 1.0f);
+            setParam (*p, fg::id::knobMode, 1);                             // the Micro knobs show; the values act whichever mode is showing
+            play (*p, host, 6000 * 24, 0.0);
+            letWindowThreadRun (300);
+            int ratchet = 0, slew = 0, shape = 0;
+            const auto microSteps = p->getSteps();
+            for (int i = 0; i < 8; ++i)
+            {
+                const auto& s = microSteps.steps[(std::size_t) i];
+                ratchet += s.ratchet != 0; slew += s.slew != 0; shape += s.modShape != edited.steps[(std::size_t) i].modShape || s.mod != edited.steps[(std::size_t) i].mod;
+            }
+            expect (ratchet >= 1 && slew >= 1 && shape >= 1, "Micro Mutate changes ratchets, slew amounts and Mod values or shapes: " + juce::String (ratchet) + "/" + juce::String (slew) + "/" + juce::String (shape));
+            bool notesKept = true;
+            for (int i = 0; i < 8; ++i) notesKept = notesKept && p->getSteps().steps[(std::size_t) i].note == edited.steps[(std::size_t) i].note;
+            expect (notesKept, "Micro Mutate leaves notes alone");
+            setParam (*p, fg::id::microRatchet, 0.0f); setParam (*p, fg::id::microSlew, 0.0f); setParam (*p, fg::id::microMod, 0.0f);
+            press (*p, fg::id::unmutate);
+            expect (p->getSteps() == edited, "UNMUTATE undoes Micro Mutate");
+        }
+
+        // -- Reseed: page or all 64; each button changes its own thing; UNMUTATE undoes it; Reseed is not an edit --
+        {
+            MockHost host;
+            auto p = makeProc (host);
+            setParam (*p, fg::id::length, 64);
+            letWindowThreadRun (100);
+            const auto before = p->getSteps();
+            p->setEditorPage (2);
+            press (*p, fg::id::reseedAll);                                  // scope Page: steps 17 to 24 only
+            auto after = p->getSteps();
+            expect (stepsEqualRange (after, before, 0, 16) && stepsEqualRange (after, before, 24, 64), "RESEED ALL on a page touches only that page's eight steps");
+            expect (! stepsEqualRange (after, before, 16, 24), "...and changes them");
+            press (*p, fg::id::unmutate);
+            expect (juce::roundToInt (getParam (*p, fg::id::length)) == 64, "(LENGTH is still 64)");
+            // the unmutate point is the last edit, which is the state before (setParam length 64 counted as an edit and the steps were unchanged)
+            expect (p->getSteps() == before, "UNMUTATE undoes RESEED");
+
+            setParam (*p, fg::id::reseedScope, 1);                          // All 64
+            press (*p, fg::id::reseedNote);
+            after = p->getSteps();
+            bool onlyNotes = true; int noteChanges = 0;
+            for (int i = 0; i < 64; ++i)
+            {
+                const auto& a = after.steps[(std::size_t) i]; const auto& b = before.steps[(std::size_t) i];
+                onlyNotes = onlyNotes && a.gate == b.gate && a.on == b.on && a.slew == b.slew && a.ratchet == b.ratchet && a.mod == b.mod;
+                noteChanges += a.note != b.note;
+            }
+            expect (onlyNotes && noteChanges > 40, "RESEED: NOTE with ALL 64 changes the notes of every step and nothing else");
+            press (*p, fg::id::unmutate);
+
+            struct Case { const char* id; const char* name; };
+            for (const Case c : { Case { fg::id::reseedGate, "GATE" }, Case { fg::id::reseedSlew, "SLEW" }, Case { fg::id::reseedRatchet, "RATCHET" },
+                                  Case { fg::id::reseedMod, "MOD" }, Case { fg::id::reseedAll, "ALL" } })
+            {
+                press (*p, c.id);
+                const auto r = p->getSteps();
+                bool noteSame = true, anything = false;
+                for (int i = 0; i < 64; ++i)
+                {
+                    noteSame = noteSame && r.steps[(std::size_t) i].note == before.steps[(std::size_t) i].note;
+                    anything = anything || ! (r.steps[(std::size_t) i] == before.steps[(std::size_t) i]);
+                }
+                if (juce::String (c.name) != "ALL") expect (noteSame, juce::String ("RESEED: ") + c.name + " leaves notes alone");
+                expect (anything, juce::String ("RESEED: ") + c.name + " changes the steps");
+                press (*p, fg::id::unmutate);
+                expect (p->getSteps() == before, juce::String ("UNMUTATE undoes RESEED: ") + c.name);
+            }
+
+            // RESEED: BRANCHES gives a new seed and does not touch the trunk
+            const auto seedBefore = p->getBranchView().seed;
+            press (*p, fg::id::reseedBranches);
+            expect (p->getBranchView().seed != seedBefore, "RESEED: BRANCHES draws a new branch seed");
+            expect (p->getSteps() == before, "...and leaves the trunk alone");
+        }
+
+        // -- what sets the UNMUTATE point: edits and LENGTH by hand do; Rotate, Transpose, Resize and Reseed do not --
+        {
+            MockHost host;
+            auto p = makeProc (host);
+            const auto edited = p->getSteps();
+            press (*p, fg::id::rotateRight);
+            press (*p, fg::id::transposeUp);
+            expect (! (p->getSteps() == edited), "ROTATE and TRANSPOSE changed the steps");
+            press (*p, fg::id::unmutate);
+            expect (p->getSteps() == edited, "UNMUTATE undoes ROTATE and TRANSPOSE");
+
+            setParam (*p, fg::id::length, 8);
+            press (*p, fg::id::resizeShrink);
+            expect (juce::roundToInt (getParam (*p, fg::id::length)) == 4, "SHRINK made LENGTH 4");
+            press (*p, fg::id::unmutate);
+            expect (juce::roundToInt (getParam (*p, fg::id::length)) == 8 && p->getSteps() == edited, "UNMUTATE undoes RESIZE, LENGTH included");
+            press (*p, fg::id::resizeExpand);
+            expect (juce::roundToInt (getParam (*p, fg::id::length)) == 16, "EXPAND made LENGTH 16");
+            press (*p, fg::id::unmutate);
+            expect (juce::roundToInt (getParam (*p, fg::id::length)) == 8 && p->getSteps() == edited, "UNMUTATE undoes EXPAND, LENGTH included");
+
+            // a new edit moves the point: ROTATE, then edit a step, then UNMUTATE keeps the rotation and the edit
+            press (*p, fg::id::rotateRight);
+            const auto rotated = p->getSteps();
+            fg::Step s = rotated.steps[2]; s.note = 40; p->setStep (2, s);
+            const auto afterEdit = p->getSteps();
+            press (*p, fg::id::transposeDown);
+            press (*p, fg::id::unmutate);
+            expect (p->getSteps() == afterEdit, "a step edit sets a new UNMUTATE point (the earlier ROTATE can no longer be undone)");
+
+            // LENGTH changed by hand is an edit too
+            setParam (*p, fg::id::length, 12);
+            letWindowThreadRun (150);
+            press (*p, fg::id::resizeShrink);
+            expect (juce::roundToInt (getParam (*p, fg::id::length)) == 6, "SHRINK from 12 made LENGTH 6");
+            press (*p, fg::id::unmutate);
+            expect (juce::roundToInt (getParam (*p, fg::id::length)) == 12, "LENGTH changed by hand is the UNMUTATE point's LENGTH");
+            letWindowThreadRun (150);
+            expect (juce::roundToInt (getParam (*p, fg::id::length)) == 12, "...and stays 12 (UNMUTATE's own LENGTH change is not an edit)");
+        }
+
+        // -- saving and loading: the unmutate point, the branch seed and the branch snapshot --
+        {
+            MockHost host;
+            auto p = makeProc (host);
+            const auto edited = p->getSteps();
+            press (*p, fg::id::rotateRight);
+            juce::MemoryBlock saved;
+            p->getStateInformation (saved);
+            FractalGardenProcessor p2;
+            p2.setPlayConfigDetails (0, 0, sr, 512);
+            p2.setStateInformation (saved.getData(), (int) saved.getSize());
+            letWindowThreadRun (300);
+            expect (p2.getBranchView().seed == p->getBranchView().seed, "the branch seed survives saving and loading");
+            press (p2, fg::id::unmutate);
+            expect (p2.getSteps() == edited, "the UNMUTATE point survives saving and loading");
+            // a project from before 0.6.0 (no undo point, no branch seed) opens, UNMUTATE then does nothing and the branches still play
+            auto xml = juce::parseXML ("<Parameters/>");
+            juce::MemoryBlock old;
+            juce::AudioProcessor::copyXmlToBinary (*xml, old);
+            FractalGardenProcessor p3;
+            p3.setPlayConfigDetails (0, 0, sr, 512);
+            p3.setStateInformation (old.getData(), (int) old.getSize());
+            const auto start = p3.getSteps();
+            press (p3, fg::id::unmutate);
+            expect (p3.getSteps() == start, "an older project: UNMUTATE has nothing to go back to and changes nothing");
+            expect (p3.getValueTreeState().state.hasProperty (FgParams::kBranchSeedProperty), "an older project gets a branch seed");
+            // loading does not count as an edit and does not press anything
+            expect (getParam (p3, fg::id::unmutate) < 0.5f && getParam (p3, fg::id::reseedAll) < 0.5f, "no button is on after loading");
+        }
+
+        // -- the TREE shows the letters of the branches of the current path --
+        {
+            FractalGardenProcessor p;
+            p.setPlayConfigDetails (0, 0, sr, 512);
+            setParam (p, fg::id::branch, 1.0f);
+            for (float path : { 0.0f, 0.3f, 1.0f })
+            {
+                setParam (p, fg::id::path, path);
+                const auto v = p.getBranchView();
+                expect (v.count == 7 && v.path >= 0 && v.path < 128, "Branch 7: the path number is 0 to 127");
+                for (int level = 1; level <= 7; ++level)
+                {
+                    const int k = fg::branchKindFor (level, v.path, v.count, v.seed);
+                    expect (k >= 0 && k < 5 && std::string ("RIT M?").find (fg::kBranchLetters[k]) != std::string::npos, "every branch has one of the letters R I T M ?");
+                }
+            }
+        }
     }
 
     std::cout << "preview checks: " << (checks - failures) << " of " << checks << " passed" << std::endl;

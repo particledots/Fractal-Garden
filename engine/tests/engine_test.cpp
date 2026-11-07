@@ -1,10 +1,13 @@
 // Engine self-test (milestones 2 and 4): checks the 46 controls against the approved control list, written out here a second time
 // (id, kind, range, default) so a slip in Params.h is caught, then the menus, the step data and its saved form, and (milestone 4) the
 // 28 scales, the pitch a stored note plays, the 11 play orders, Rotate and Transpose, and (milestone 5) the ratchet list, the sixteen Mod
-// rates, the four Mod modes' curves, Resize and the conversion of older saved projects.
+// rates, the four Mod modes' curves, Resize and the conversion of older saved projects, and (milestones 6 and 7) Default Mutate's two
+// zones, Micro Mutate, the Reseed ranges, branches and Path (the binary tree).
 // Prints "engine tests: N checks passed" and exits 0, or lists every failure and exits 1.
 
+#include <fg/Branch.h>
 #include <fg/Mod.h>
+#include <fg/Mutate.h>
 #include <fg/Orders.h>
 #include <fg/Params.h>
 #include <fg/Pitch.h>
@@ -584,6 +587,409 @@ int main()
         v2[0] = 1;                                                       // version 1 too (MIDI notes, converted as before)
         fg::StepData c1;
         CHECK (c1.fromBytes (v2.data(), v2.size()) && c1.steps[7].ratchet == 5 && c1.steps[7].modRate == 0);
+    }
+
+    // ================= milestones 6 and 7: Mutate, Micro Mutate, Reseed, branches and Path =================
+    {
+        // ---- the zone arithmetic of Default Mutate ----
+        CHECK (fg::mutateNoteChance (0.0) == 0.0 && fg::mutateGateChance (0.0) == 0.0);
+        CHECK (std::fabs (fg::mutateNoteChance (0.25) - 0.5) < 1e-12 && fg::mutateGateChance (0.25) == 0.0);
+        CHECK (std::fabs (fg::mutateNoteChance (0.5) - 1.0) < 1e-12 && fg::mutateGateChance (0.5) == 0.0);          // 100 % note at the end of zone 1
+        CHECK (fg::mutateNoteChance (0.5001) == 0.75 && fg::mutateNoteChance (1.0) == 0.75);                      // drops back to a fixed 75 %
+        CHECK (fg::mutateGateChance (0.5001) < 0.001 && std::fabs (fg::mutateGateChance (0.75) - 0.5) < 1e-12 && fg::mutateGateChance (1.0) == 1.0);
+
+        // ---- Default Mutate: knob 0 draws nothing and changes nothing ----
+        {
+            fg::Rng rng (5), untouched (5);
+            fg::Step s;
+            const fg::Step before = s;
+            for (int i = 0; i < 100; ++i)
+                CHECK (! fg::defaultMutate (s, 0.0, 0, rng));
+            CHECK (s == before && rng.state == untouched.state);
+        }
+
+        // ---- zone 1: the note changes about as often as the knob says, the gate and on/off never ----
+        for (double knob : { 0.1, 0.25, 0.5 })
+        {
+            fg::Rng rng (11);
+            int changed = 0, gateTouched = 0;
+            const int trials = 20000;
+            for (int i = 0; i < trials; ++i)
+            {
+                fg::Step s;
+                s.note = 30;
+                const fg::Step before = s;
+                fg::defaultMutate (s, knob, 0, rng);
+                if (s.note != before.note) ++changed;
+                if (s.gate != before.gate || s.on != before.on) ++gateTouched;
+            }
+            const double expected = fg::mutateNoteChance (knob) * trials;
+            CHECK (gateTouched == 0);
+            CHECK (std::fabs ((double) changed - expected) < 0.03 * trials);
+        }
+
+        // ---- zone 2: the note chance is 75 %; gate changes rise to 100 %; of those 70 % change the length, 30 % toggle on / off ----
+        {
+            fg::Rng rng (12);
+            int noteChanged = 0, gateLength = 0, toggled = 0;
+            const int trials = 30000;
+            for (int i = 0; i < trials; ++i)
+            {
+                fg::Step s;
+                s.note = 30; s.gate = 50; s.on = true;
+                fg::defaultMutate (s, 1.0, 0, rng);
+                if (s.note != 30) ++noteChanged;
+                if (s.gate != 50) ++gateLength;
+                if (! s.on) ++toggled;
+            }
+            CHECK (std::fabs ((double) noteChanged / trials - 0.75) < 0.02);
+            CHECK (std::fabs ((double) toggled / trials - 0.30) < 0.02);
+            CHECK (std::fabs ((double) gateLength / trials - 0.70) < 0.02);
+        }
+        {
+            fg::Rng rng (13);                          // halfway through zone 2 the gate chance is 50 %
+            int gateTouched = 0;
+            const int trials = 20000;
+            for (int i = 0; i < trials; ++i)
+            {
+                fg::Step s; s.gate = 50; s.on = true;
+                fg::defaultMutate (s, 0.75, 0, rng);
+                if (s.gate != 50 || ! s.on) ++gateTouched;
+            }
+            CHECK (std::fabs ((double) gateTouched / trials - 0.5) < 0.03);
+        }
+
+        // ---- the size of a pitch mutation: 1, 2 or 3 scale steps (50 / 24 / 16 %), or an octave one time in five; always in range ----
+        for (int scale : { 0, 16, 27 })
+        {
+            fg::Rng rng (21 + (std::uint64_t) scale);
+            const int size = fg::scaleSize (scale);
+            int small = 0, octave = 0, other = 0, total = 0;
+            for (int i = 0; i < 20000; ++i)
+            {
+                fg::Step s;
+                s.note = (std::uint8_t) fg::degreeToStored (fg::degreeCount (scale) / 2, scale);
+                const int d0 = fg::storedToDegree (s.note, scale);
+                CHECK (fg::mutateNote (s, scale, rng));
+                CHECK (s.note <= fg::kStoredNoteMax);
+                const int dist = std::abs (fg::storedToDegree (s.note, scale) - d0);
+                ++total;
+                if (dist >= 1 && dist <= 3 && dist != size) ++small;
+                else if (dist == size) ++octave;
+                else ++other;
+            }
+            CHECK (other == 0 || size <= 3);
+            CHECK (std::fabs ((double) octave / total - 0.2) < 0.03 || size <= 3);
+            CHECK (small + octave == total);
+        }
+        {
+            fg::Rng rng (31);                          // at the very bottom and top of the range a mutation goes the other way instead
+            int stuck = 0;
+            for (int i = 0; i < 2000; ++i)
+            {
+                fg::Step lo, hi; lo.note = 0; hi.note = (std::uint8_t) fg::degreeToStored (fg::degreeCount (0) - 1, 0);
+                const int hiBefore = hi.note;
+                if (! fg::mutateNote (lo, 0, rng) || lo.note == 0) ++stuck;
+                if (! fg::mutateNote (hi, 0, rng) || hi.note == hiBefore) ++stuck;
+            }
+            CHECK (stuck == 0);
+        }
+
+        // ---- Micro Mutate ----
+        {
+            fg::Rng rng (41), untouched (41);
+            fg::Step s;
+            const fg::Step before = s;
+            for (int i = 0; i < 50; ++i)
+                CHECK (! fg::microMutate (s, 0.0, 0.0, 0.0, 0, rng));
+            CHECK (s == before && rng.state == untouched.state);
+        }
+        {
+            // each knob changes only its own thing, and 100 % changes (nearly) every step
+            const int trials = 5000;
+            int ratchetChanged = 0, slewChanged = 0, shapeChanged = 0, modChanged = 0;
+            fg::Rng rng (42);
+            for (int i = 0; i < trials; ++i)
+            {
+                fg::Step s; s.ratchet = 0; s.slew = 77; s.mod = 33; s.modShape = 2;
+                fg::Step t = s;
+                fg::microMutate (t, 1.0, 0.0, 0.0, 0, rng);
+                CHECK (t.slew == s.slew && t.mod == s.mod && t.modShape == s.modShape && t.note == s.note && t.gate == s.gate);
+                if (t.ratchet != s.ratchet) ++ratchetChanged;
+                CHECK (t.ratchet <= fg::kRatchetMax);
+                t = s; fg::microMutate (t, 0.0, 1.0, 0.0, 0, rng);
+                CHECK (t.ratchet == s.ratchet && t.mod == s.mod && t.modShape == s.modShape);
+                if (t.slew != s.slew) ++slewChanged;
+                CHECK (t.slew <= fg::kSlewMax);
+                t = s; fg::microMutate (t, 0.0, 0.0, 1.0, 0, rng);                    // Shapes mode: a new shape, the value is left alone
+                CHECK (t.mod == s.mod && t.ratchet == s.ratchet && t.slew == s.slew);
+                if (t.modShape != s.modShape) ++shapeChanged;
+                t = s; fg::microMutate (t, 0.0, 0.0, 1.0, 2, rng);                    // Envelope mode: a new value, the shape is left alone
+                CHECK (t.modShape == s.modShape);
+                CHECK (t.mod <= fg::kModMax);
+                if (t.mod != s.mod) ++modChanged;
+            }
+            CHECK (ratchetChanged > trials * 6 / 10);          // x1 is picked 30 % of the time, and then nothing changes
+            CHECK (slewChanged > trials * 9 / 10);
+            CHECK (shapeChanged > trials * 8 / 10);
+            CHECK (modChanged > trials * 9 / 10);
+        }
+        {
+            // half the knob, half the steps (the chance is the knob)
+            fg::Rng rng (43);
+            int changed = 0;
+            const int trials = 20000;
+            for (int i = 0; i < trials; ++i)
+            {
+                fg::Step s; s.slew = 77;
+                fg::microMutate (s, 0.0, 0.5, 0.0, 0, rng);
+                if (s.slew != 77) ++changed;
+            }
+            CHECK (std::fabs ((double) changed / trials - 0.5) < 0.03);
+        }
+        {
+            // the ratchet draw: every amount can come up, x1 most often, x32 least
+            fg::Rng rng (44);
+            int counts[fg::kNumRatchets] = {};
+            for (int i = 0; i < 40000; ++i) ++counts[fg::randomRatchet (rng)];
+            for (int i = 0; i < fg::kNumRatchets; ++i) CHECK (counts[i] > 0);
+            CHECK (counts[0] > counts[1] && counts[1] > counts[4] && counts[4] > counts[7]);
+        }
+
+        // ---- Reseed ----
+        {
+            const fg::StepData base = fg::StepData::makeSample();
+            // Note: only the note field changes, every note is a real degree of the scale, the whole 5-octave range turns up
+            for (int scale : { 0, 16, 27 })
+            {
+                fg::StepData d = base;
+                fg::Rng rng (51);
+                bool onlyNote = true;
+                std::set<int> octaves;
+                for (int round = 0; round < 40; ++round)
+                {
+                    fg::reseedSteps (d, 0, 64, fg::ReseedKind::Note, scale, rng);
+                    for (int i = 0; i < 64; ++i)
+                    {
+                        const auto& s = d.steps[(std::size_t) i];
+                        onlyNote = onlyNote && s.gate == base.steps[(std::size_t) i].gate && s.on == base.steps[(std::size_t) i].on
+                                            && s.slew == base.steps[(std::size_t) i].slew && s.ratchet == base.steps[(std::size_t) i].ratchet
+                                            && s.mod == base.steps[(std::size_t) i].mod;
+                        CHECK (s.note <= fg::kStoredNoteMax && (s.note % fg::kDegreeSlots) < fg::scaleSize (scale));
+                        octaves.insert (s.note / fg::kDegreeSlots);
+                    }
+                }
+                CHECK (onlyNote);
+                CHECK ((int) octaves.size() == fg::kNumOctaves);
+            }
+            // Gate: about 20 % off, lengths from the list, nothing else changes
+            {
+                fg::StepData d = base; fg::Rng rng (52);
+                int off = 0, total = 0; bool ok = true;
+                for (int round = 0; round < 200; ++round)
+                {
+                    fg::reseedSteps (d, 0, 64, fg::ReseedKind::Gate, 0, rng);
+                    for (int i = 0; i < 64; ++i)
+                    {
+                        const auto& s = d.steps[(std::size_t) i];
+                        ++total; if (! s.on) ++off;
+                        ok = ok && s.note == base.steps[(std::size_t) i].note && s.slew == base.steps[(std::size_t) i].slew
+                                && (s.gate == 10 || s.gate == 25 || s.gate == 40 || s.gate == 50 || s.gate == 60 || s.gate == 75 || s.gate == 90 || s.gate == 100);
+                    }
+                }
+                CHECK (ok);
+                CHECK (std::fabs ((double) off / total - 0.2) < 0.02);
+            }
+            // Slew: 70 % none, otherwise 10 to 100
+            {
+                fg::StepData d = base; fg::Rng rng (53);
+                int zero = 0, total = 0; bool ok = true;
+                for (int round = 0; round < 200; ++round)
+                {
+                    fg::reseedSteps (d, 0, 64, fg::ReseedKind::Slew, 0, rng);
+                    for (const auto& s : d.steps) { ++total; if (s.slew == 0) ++zero; else ok = ok && s.slew >= 10 && s.slew <= 100; }
+                }
+                CHECK (ok);
+                CHECK (std::fabs ((double) zero / total - 0.7) < 0.02);
+            }
+            // Ratchet: 75 % x1, every other amount appears
+            {
+                fg::StepData d = base; fg::Rng rng (54);
+                int one = 0, total = 0; std::set<int> seen;
+                for (int round = 0; round < 200; ++round)
+                {
+                    fg::reseedSteps (d, 0, 64, fg::ReseedKind::Ratchet, 0, rng);
+                    for (const auto& s : d.steps) { ++total; if (s.ratchet == 0) ++one; seen.insert (s.ratchet); }
+                }
+                CHECK (std::fabs ((double) one / total - 0.75) < 0.02);
+                CHECK ((int) seen.size() == fg::kNumRatchets);
+            }
+            // Mod: value, shape and rate; all 16 rates and 8 shapes turn up
+            {
+                fg::StepData d = base; fg::Rng rng (55);
+                std::set<int> shapes, rates; int rateOne = 0, total = 0; bool ok = true;
+                for (int round = 0; round < 200; ++round)
+                {
+                    fg::reseedSteps (d, 0, 64, fg::ReseedKind::Mod, 0, rng);
+                    for (int i = 0; i < 64; ++i)
+                    {
+                        const auto& s = d.steps[(std::size_t) i];
+                        shapes.insert (s.modShape); rates.insert (s.modRate); ++total; if (s.modRate == 0) ++rateOne;
+                        ok = ok && s.mod <= 100 && s.note == base.steps[(std::size_t) i].note && s.gate == base.steps[(std::size_t) i].gate;
+                    }
+                }
+                CHECK (ok && (int) shapes.size() == 8 && (int) rates.size() == 16);
+                CHECK (std::fabs ((double) rateOne / total - 0.6) < 0.02);
+            }
+            // All: every field is reseeded; a Page touches only its eight steps; the same seed gives the same result
+            {
+                fg::StepData a = base, b = base, pageOnly = base;
+                fg::Rng r1 (56), r2 (56), r3 (56);
+                fg::reseedSteps (a, 0, 64, fg::ReseedKind::All, 0, r1);
+                fg::reseedSteps (b, 0, 64, fg::ReseedKind::All, 0, r2);
+                CHECK (a == b);
+                CHECK (! (a == base));
+                fg::reseedSteps (pageOnly, 16, 8, fg::ReseedKind::All, 0, r3);
+                bool inside = true, outside = true;
+                for (int i = 0; i < 64; ++i)
+                {
+                    const bool same = pageOnly.steps[(std::size_t) i] == base.steps[(std::size_t) i];
+                    if (i >= 16 && i < 24) inside = inside && ! same; else outside = outside && same;
+                }
+                CHECK (outside);
+                CHECK (inside || std::count_if (pageOnly.steps.begin() + 16, pageOnly.steps.begin() + 24, [&] (const fg::Step& s) { return ! (s == base.steps[16]); }) > 0);
+                fg::StepData edge = base; fg::Rng r4 (57);
+                fg::reseedSteps (edge, 60, 20, fg::ReseedKind::All, 0, r4);          // cut off at 64, never past the end
+                fg::reseedSteps (edge, 70, 5, fg::ReseedKind::All, 0, r4);           // wholly outside: nothing
+                bool head = true;
+                for (int i = 0; i < 60; ++i) head = head && edge.steps[(std::size_t) i] == base.steps[(std::size_t) i];
+                CHECK (head);
+            }
+        }
+
+        // ---- Branch and Path ----
+        for (int n = 0; n <= 7; ++n)
+        {
+            CHECK (fg::branchCountFromKnob ((double) n / 7.0) == n);
+            CHECK (fg::pathCountFor (n) == (1 << n));
+            CHECK (fg::pathFromKnob (0.0, n) == 0 && fg::pathFromKnob (1.0, n) == (1 << n) - 1);
+        }
+        CHECK (fg::branchCountFromKnob (0.0) == 0 && fg::branchCountFromKnob (1.0) == 7 && fg::pathCountFor (7) == 128);
+        CHECK (fg::pathFromKnob (0.5, 7) == 64 || fg::pathFromKnob (0.5, 7) == 63);
+
+        {
+            // siblings at a level always get different changes; every kind turns up; the same seed and path always agree
+            std::set<int> kindsSeen;
+            bool siblingsDiffer = true, repeats = true;
+            for (std::uint32_t seed = 1; seed <= 200; ++seed)
+                for (int n = 1; n <= 7; ++n)
+                    for (int path = 0; path < (1 << n); path += (n > 4 ? 7 : 1))
+                        for (int level = 1; level <= n; ++level)
+                        {
+                            const int k = fg::branchKindFor (level, path, n, seed);
+                            kindsSeen.insert (k);
+                            repeats = repeats && k == fg::branchKindFor (level, path, n, seed) && k >= 0 && k < fg::kNumBranchKinds;
+                            const int sibling = path ^ (1 << (n - level));            // the other variant at this level (same earlier bits)
+                            if (sibling < (1 << n)) siblingsDiffer = siblingsDiffer && k != fg::branchKindFor (level, sibling, n, seed);
+                        }
+            CHECK (siblingsDiffer && repeats && (int) kindsSeen.size() == fg::kNumBranchKinds);
+        }
+
+        {
+            // the same inputs always give the same branches; paths that share their first bits share those branches; the trunk is never touched
+            const fg::StepData trunk = fg::StepData::makeSample();
+            for (int scale : { 0, 16, 27 })
+            {
+                fg::BranchSet a, b, c;
+                const std::uint32_t seed = 987;
+                fg::buildBranches (a, trunk, 8, scale, 7, 0b1011010, seed);
+                fg::buildBranches (b, trunk, 8, scale, 7, 0b1011010, seed);
+                CHECK (a.count == 7);
+                bool same = true;
+                for (int i = 0; i < 7; ++i) for (int j = 0; j < 64; ++j) same = same && a.steps[(std::size_t) i][(std::size_t) j] == b.steps[(std::size_t) i][(std::size_t) j];
+                CHECK (same);
+                fg::buildBranches (c, trunk, 8, scale, 7, 0b1011111, seed);            // first four bits the same, the last three different
+                bool sharedHead = true, tailDiffers = false;
+                for (int i = 0; i < 4; ++i) for (int j = 0; j < 64; ++j) sharedHead = sharedHead && a.steps[(std::size_t) i][(std::size_t) j] == c.steps[(std::size_t) i][(std::size_t) j];
+                for (int i = 4; i < 7; ++i) for (int j = 0; j < 8; ++j) tailDiffers = tailDiffers || ! (a.steps[(std::size_t) i][(std::size_t) j] == c.steps[(std::size_t) i][(std::size_t) j]);
+                CHECK (sharedHead);
+                CHECK (tailDiffers);
+                bool kindsMatch = true;
+                for (int i = 0; i < 7; ++i) kindsMatch = kindsMatch && a.kind[(std::size_t) i] == fg::branchKindFor (i + 1, 0b1011010, 7, seed);
+                CHECK (kindsMatch);
+                // a different seed gives different branches
+                fg::BranchSet d;
+                fg::buildBranches (d, trunk, 8, scale, 7, 0b1011010, seed + 1);
+                bool anyDifferent = false;
+                for (int i = 0; i < 7; ++i) for (int j = 0; j < 8; ++j) anyDifferent = anyDifferent || ! (a.steps[(std::size_t) i][(std::size_t) j] == d.steps[(std::size_t) i][(std::size_t) j]);
+                CHECK (anyDifferent);
+            }
+        }
+
+        {
+            // what each change does, checked branch by branch over many seeds
+            const fg::StepData trunk = fg::StepData::makeSample();
+            int seen[fg::kNumBranchKinds] = {};
+            for (int scale : { 0, 16 })
+                for (std::uint32_t seed = 1; seed <= 300; ++seed)
+                {
+                    const int L = 8 + (int) (seed % 9);
+                    fg::BranchSet set;
+                    fg::buildBranches (set, trunk, L, scale, 3, (int) (seed % 8), seed);
+                    const int pivot = fg::storedToDegree (trunk.steps[0].note, scale);
+                    for (int b = 0; b < 3; ++b)
+                    {
+                        const auto& prev = b == 0 ? trunk.steps : set.steps[(std::size_t) (b - 1)];
+                        const auto& cur = set.steps[(std::size_t) b];
+                        ++seen[set.kind[(std::size_t) b]];
+                        bool ok = true;
+                        switch (set.kind[(std::size_t) b])
+                        {
+                            case fg::kBranchReverse:
+                                for (int i = 0; i < L; ++i) ok = ok && cur[(std::size_t) i] == prev[(std::size_t) (L - 1 - i)];
+                                break;
+                            case fg::kBranchInverse:
+                                for (int i = 0; i < L; ++i)
+                                    ok = ok && cur[(std::size_t) i].note == fg::degreeToStored (2 * pivot - fg::storedToDegree (prev[(std::size_t) i].note, scale), scale)
+                                            && cur[(std::size_t) i].gate == prev[(std::size_t) i].gate && cur[(std::size_t) i].on == prev[(std::size_t) i].on;
+                                break;
+                            case fg::kBranchTranspose:
+                            {
+                                // the amount is the largest rise seen (a step at the top of the range is held there)
+                                int up = 0;
+                                for (int i = 0; i < L; ++i)
+                                    up = std::max (up, fg::storedToDegree (cur[(std::size_t) i].note, scale) - fg::storedToDegree (prev[(std::size_t) i].note, scale));
+                                ok = up >= 1 && up <= fg::scaleSize (scale);
+                                for (int i = 0; i < L; ++i)
+                                    ok = ok && cur[(std::size_t) i].note == fg::degreeToStored (fg::storedToDegree (prev[(std::size_t) i].note, scale) + up, scale);
+                                break;
+                            }
+                            case fg::kBranchMutate:
+                            {
+                                int differs = 0;
+                                for (int i = 0; i < L; ++i)
+                                {
+                                    differs += ! (cur[(std::size_t) i] == prev[(std::size_t) i]);
+                                    ok = ok && cur[(std::size_t) i].slew == prev[(std::size_t) i].slew && cur[(std::size_t) i].ratchet == prev[(std::size_t) i].ratchet
+                                            && cur[(std::size_t) i].mod == prev[(std::size_t) i].mod;
+                                }
+                                ok = ok && differs >= 1 - (L < 3 ? 1 : 0);
+                                break;
+                            }
+                            default:
+                                for (int i = 0; i < L; ++i)
+                                    ok = ok && cur[(std::size_t) i].note <= fg::kStoredNoteMax && cur[(std::size_t) i].slew == prev[(std::size_t) i].slew
+                                            && cur[(std::size_t) i].ratchet == prev[(std::size_t) i].ratchet && cur[(std::size_t) i].mod == prev[(std::size_t) i].mod;
+                                break;
+                        }
+                        // steps past LENGTH carry the trunk's data
+                        for (int i = L; i < 64; ++i) ok = ok && cur[(std::size_t) i] == trunk.steps[(std::size_t) i];
+                        CHECK (ok);
+                    }
+                }
+            for (int k = 0; k < fg::kNumBranchKinds; ++k) CHECK (seen[k] > 20);
+            CHECK (fg::kBranchLetters[0] == 'R' && fg::kBranchLetters[1] == 'I' && fg::kBranchLetters[2] == 'T' && fg::kBranchLetters[3] == 'M' && fg::kBranchLetters[4] == '?');
+        }
     }
 
     std::printf ("engine tests: %d checks passed\n", checks - failures);

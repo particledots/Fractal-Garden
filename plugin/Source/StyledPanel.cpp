@@ -1,5 +1,6 @@
 #include "StyledPanel.h"
 
+#include <fg/Branch.h>
 #include <fg/Mod.h>
 #include <fg/Steps.h>
 
@@ -840,8 +841,9 @@ juce::String FractalGardenStyledPanel::headerLine2() const
     if (previewHeader)
         return previewLine2;
     const auto view = proc.getPlayerView();
+    const juce::String where = view.running && view.section > 0 ? "BRANCH " + juce::String (view.section) : juce::String ("TRUNK");
     return "STEP " + (view.running && view.step >= 0 ? juce::String (view.step + 1) : juce::String ("-")) + "/" + juce::String (intParam (fg::id::length))
-           + " PAGE " + juce::String (proc.getEditorPage() + 1) + " TRUNK";
+           + " PAGE " + juce::String (proc.getEditorPage() + 1) + " " + where;
 }
 
 juce::String FractalGardenStyledPanel::headerCaption() const
@@ -912,6 +914,10 @@ void FractalGardenStyledPanel::timerCallback()
     mixIn (intParam (fg::id::length));
     mixIn (intParam (fg::id::root));
     mixIn (juce::jlimit (0, 7, roundedInt (floatParam (fg::id::branch) * 7.0f)));
+    {
+        const auto bv = proc.getBranchView();
+        mixIn (bv.path); mixIn ((int) bv.seed);            // the TREE letters depend on the path and the seed
+    }
     mixIn (h.known ? 1 : 0); mixIn (h.playing ? 1 : 0); mixIn (h.tempoKnown ? 1 : 0); mixIn (roundedInt ((float) h.bpm * 10.0f));
     mixIn (proc.getEditorPage());
     mixIn (chancePanel->isVisible() ? 1 : 0);
@@ -937,7 +943,13 @@ void FractalGardenStyledPanel::updateHeaderLights()
     const bool newStepLit = view.running && stepLampTicks > 0;
     const bool newGateLit = view.running && (view.gate || gateLampTicks > 0);
 
-    stepEditor->setPlayhead (view.running ? view.step : -1);
+    stepEditor->setPlayhead (view.running && view.section <= 0 ? view.step : -1);       // the step editor shows the trunk; the TREE shows the branches
+    const int playingSection = view.running ? view.section : -1;
+    if (playingSection != liveTreeSection)
+    {
+        liveTreeSection = playingSection;
+        repaint (712, 558, 440, 48);
+    }
 
     const auto line1 = headerLine1(), line2 = headerLine2(), caption = headerCaption();
     if (newStepLit != stepLit || newGateLit != gateLit || line1 != lastLine1 || line2 != lastLine2 || caption != lastCaption)
@@ -981,14 +993,15 @@ void FractalGardenStyledPanel::paint (juce::Graphics& g)
     drawAt (g, "RESEED", 726.0f, 478.0f, sans (14.5f, true, 0.12f), text);
     drawAt (g, "WHEN A SINGLE TAB:", 856.0f, 502.0f, mono (11.5f), muted);
 
-    // Tree: the play order of the trunk and the branches, with a letter for what each branch did (sample letters until milestone 6)
+    // Tree: the play order of the trunk and the branches, with a letter for what each branch did on the current path
     fillCard (g, { 712.0f, 558.0f, 440.0f, 48.0f });
     drawAt (g, "TREE", 726.0f, 575.0f, mono (12.0f), muted);
     drawAt (g, "play order", 726.0f, 593.0f, sans (11.5f), muted);
     {
         const int nb = juce::jlimit (0, 7, roundedInt (floatParam (fg::id::branch) * 7.0f));
-        static const char* const letters[7] = { "R", "I", "T", "M", "?", "R", "I" };
-        const bool trunkPlays = previewTreePlay == 0;
+        const auto bv = proc.getBranchView();
+        const int playing0 = previewTreePlay >= 0 ? previewTreePlay : liveTreeSection;          // 0 = trunk, 1.. = branch, -1 = nothing playing
+        const bool trunkPlays = playing0 == 0;
         const juce::Rectangle<float> trunk (790.0f, 569.0f, 60.0f, 26.0f);
         g.setColour (trunkPlays ? teal : control);
         g.fillRoundedRectangle (trunk.reduced (0.5f), 5.0f);
@@ -998,13 +1011,14 @@ void FractalGardenStyledPanel::paint (juce::Graphics& g)
         for (int i = 0; i < 7; ++i)
         {
             const juce::Rectangle<float> cell ((float) (854 + i * 40), 569.0f, 36.0f, 26.0f);
-            const bool active = i < nb, playing = previewTreePlay == i + 1;
+            const bool active = i < nb, playing = playing0 == i + 1;
             g.setColour (active ? (playing ? teal : control) : mixColours (control, background, 0.5f));
             g.fillRoundedRectangle (cell.reduced (0.5f), 5.0f);
             g.setColour (active ? (playing ? mixColours (teal, juce::Colours::white, 0.3f) : controlEdge) : mixColours (controlEdge, background, 0.6f));
             g.drawRoundedRectangle (cell.reduced (0.5f), 5.0f, 1.0f);
             if (active)
-                drawAt (g, letters[i], cell.getCentreX(), cell.getCentreY(), mono (13.0f, true), playing ? background : text, anchorMiddle);
+                drawAt (g, juce::String::charToString ((juce::juce_wchar) fg::kBranchLetters[fg::branchKindFor (i + 1, bv.path, bv.count, bv.seed)]),
+                        cell.getCentreX(), cell.getCentreY(), mono (13.0f, true), playing ? background : text, anchorMiddle);
             else
                 drawAt (g, "-", cell.getCentreX(), cell.getCentreY(), mono (13.0f, true), muted.withAlpha (0.35f), anchorMiddle);
         }

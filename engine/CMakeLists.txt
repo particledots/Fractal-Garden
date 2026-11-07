@@ -4,6 +4,8 @@
 #   include/fg/Pitch.h    the 28 scales and the pitch a stored note plays for Scale, Key and Root (milestone 4)
 #   include/fg/Orders.h   the 11 play orders (milestone 4)
 #   include/fg/Mod.h      the four Mod output modes and the sixteen Mod rates (milestone 5)
+#   include/fg/Mutate.h   Mutate, Micro Mutate and Reseed: the random changes to steps (milestones 6 and 7)
+#   include/fg/Branch.h   branches and Path (milestone 6)
 #   include/fg/Clock.h    the sequencer clock and the trunk player (milestone 3): Logic's song position in, notes out
 # The rest of the sequencer arrives in later milestones.
 
@@ -13,6 +15,8 @@ add_library(fg_engine STATIC
     src/Orders.cpp
     src/Steps.cpp
     src/Mod.cpp
+    src/Mutate.cpp
+    src/Branch.cpp
     src/Clock.cpp
 )
 

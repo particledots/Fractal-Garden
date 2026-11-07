@@ -1,6 +1,15 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+namespace
+{
+    // The controls whose changes the wrapper watches: the momentary buttons that act, and LENGTH (a change by hand is an edit).
+    constexpr const char* kListened[] = {
+        fg::id::reset, fg::id::rotateLeft, fg::id::rotateRight, fg::id::transposeDown, fg::id::transposeUp, fg::id::resizeShrink, fg::id::resizeExpand,
+        fg::id::unmutate, fg::id::reseedAll, fg::id::reseedBranches, fg::id::reseedNote, fg::id::reseedGate, fg::id::reseedSlew,
+        fg::id::reseedRatchet, fg::id::reseedMod, fg::id::length };
+}
+
 FractalGardenProcessor::FractalGardenProcessor()
     : AudioProcessor (BusesProperties()),                       // a MIDI effect: no audio buses
       apvts (*this, nullptr, "Parameters", FgParams::createLayout()),
@@ -14,6 +23,13 @@ FractalGardenProcessor::FractalGardenProcessor()
     rootParam   = apvts.getRawParameterValue (fg::id::root);
     orderParam  = apvts.getRawParameterValue (fg::id::order);
     modModeParam = apvts.getRawParameterValue (fg::id::modMode);
+    branchParam = apvts.getRawParameterValue (fg::id::branch);
+    pathParam = apvts.getRawParameterValue (fg::id::path);
+    mutateParam = apvts.getRawParameterValue (fg::id::mutate);
+    microRatchetParam = apvts.getRawParameterValue (fg::id::microRatchet);
+    microSlewParam = apvts.getRawParameterValue (fg::id::microSlew);
+    microModParam = apvts.getRawParameterValue (fg::id::microMod);
+    reseedScopeParam = apvts.getRawParameterValue (fg::id::reseedScope);
     pendRepeatParam = apvts.getRawParameterValue (fg::id::pendRepeat);
     chanceParams[fg::ChanceMix::Forward]  = apvts.getRawParameterValue (fg::id::chanceForward);
     chanceParams[fg::ChanceMix::Backward] = apvts.getRawParameterValue (fg::id::chanceBackward);
@@ -28,11 +44,21 @@ FractalGardenProcessor::FractalGardenProcessor()
     orderSeed.store (((std::uint32_t) juce::Random::getSystemRandom().nextInt() & 0x7fffffffu) | 1u);
     apvts.state.setProperty (FgParams::kSeedProperty, (int) orderSeed.load(), nullptr);
 
+    // The branch seed and the random numbers of the Reseed buttons: chosen once for a new instance (the seed is then saved with the project).
+    branchSeed.store (((std::uint32_t) juce::Random::getSystemRandom().nextInt() & 0x7fffffffu) | 1u);
+    reseedRng = fg::Rng ((std::uint64_t) juce::Random::getSystemRandom().nextInt64());
+    undoSteps = steps;
+    undoLength = 8;
+    branchSource = steps;
+    apvts.state.setProperty (FgParams::kBranchSeedProperty, (int) branchSeed.load(), nullptr);
+
     audioSteps = steps;
+    audioBranchSource = steps;
     outBuffer.ensureSize (16384);
     saveStepsToState();
+    saveUndoToState();
 
-    for (const char* id : { fg::id::reset, fg::id::rotateLeft, fg::id::rotateRight, fg::id::transposeDown, fg::id::transposeUp, fg::id::resizeShrink, fg::id::resizeExpand })
+    for (const char* id : kListened)
         apvts.addParameterListener (id, this);
     startTimerHz (20);
 }
@@ -40,7 +66,7 @@ FractalGardenProcessor::FractalGardenProcessor()
 FractalGardenProcessor::~FractalGardenProcessor()
 {
     stopTimer();
-    for (const char* id : { fg::id::reset, fg::id::rotateLeft, fg::id::rotateRight, fg::id::transposeDown, fg::id::transposeUp, fg::id::resizeShrink, fg::id::resizeExpand })
+    for (const char* id : kListened)
         apvts.removeParameterListener (id, this);
 }
 
@@ -61,6 +87,14 @@ void FractalGardenProcessor::switchOff (const char* parameterId)
 // A press of a momentary button is counted here, on whatever thread changed the control (the window, or Logic's automation).
 void FractalGardenProcessor::parameterChanged (const juce::String& parameterId, float newValue)
 {
+    if (parameterId == fg::id::length)
+    {
+        // LENGTH changed by hand or by automation is a manual edit (it sets the unmutate point and remakes the branches). A change the
+        // plugin makes itself (Resize, Unmutate, loading a project) records the new value first, so it is not seen as a change.
+        if (juce::roundToInt (newValue) != lastLengthSeen.exchange (juce::roundToInt (newValue)))
+            lengthEditPending.store (true);
+        return;
+    }
     if (newValue <= 0.5f)
         return;                                     // the button popping back off is not a press
     if (parameterId == fg::id::reset)               ++resetCount;
@@ -70,6 +104,14 @@ void FractalGardenProcessor::parameterChanged (const juce::String& parameterId, 
     else if (parameterId == fg::id::transposeUp)    ++pendingTransposeUp;
     else if (parameterId == fg::id::resizeShrink)   ++pendingShrink;
     else if (parameterId == fg::id::resizeExpand)   ++pendingExpand;
+    else if (parameterId == fg::id::unmutate)       ++pendingUnmutate;
+    else if (parameterId == fg::id::reseedAll)      ++pendingReseedAll;
+    else if (parameterId == fg::id::reseedBranches) ++pendingReseedBranches;
+    else if (parameterId == fg::id::reseedNote)     ++pendingReseedNote;
+    else if (parameterId == fg::id::reseedGate)     ++pendingReseedGate;
+    else if (parameterId == fg::id::reseedSlew)     ++pendingReseedSlew;
+    else if (parameterId == fg::id::reseedRatchet)  ++pendingReseedRatchet;
+    else if (parameterId == fg::id::reseedMod)      ++pendingReseedMod;
 }
 
 // Rotate and Transpose change the step data, so they are carried out here, on the window thread.
@@ -81,6 +123,124 @@ void FractalGardenProcessor::applyPendingButtons()
     for (int n = pendingTransposeUp.exchange (0); n > 0; --n)     transposeTrunk (+1);
     for (int n = pendingShrink.exchange (0); n > 0; --n)          resizeTrunk (-1);
     for (int n = pendingExpand.exchange (0); n > 0; --n)          resizeTrunk (+1);
+    for (int n = pendingUnmutate.exchange (0); n > 0; --n)        unmutate();
+    for (int n = pendingReseedAll.exchange (0); n > 0; --n)       reseed (fg::ReseedKind::All);
+    for (int n = pendingReseedNote.exchange (0); n > 0; --n)      reseed (fg::ReseedKind::Note);
+    for (int n = pendingReseedGate.exchange (0); n > 0; --n)      reseed (fg::ReseedKind::Gate);
+    for (int n = pendingReseedSlew.exchange (0); n > 0; --n)      reseed (fg::ReseedKind::Slew);
+    for (int n = pendingReseedRatchet.exchange (0); n > 0; --n)   reseed (fg::ReseedKind::Ratchet);
+    for (int n = pendingReseedMod.exchange (0); n > 0; --n)       reseed (fg::ReseedKind::Mod);
+    for (int n = pendingReseedBranches.exchange (0); n > 0; --n)  reseedBranches();
+}
+
+// The window thread's side of Mutate: write the changes the audio thread made to trunk steps into the saved steps.
+void FractalGardenProcessor::drainMutations()
+{
+    int start1, size1, start2, size2;
+    mutationFifo.prepareToRead (mutationFifo.getNumReady(), start1, size1, start2, size2);
+    bool any = false;
+    const auto epochNow = (std::uint32_t) stepsRevision.load();
+    {
+        const juce::ScopedLock sl (stepLock);
+        auto apply = [&] (int start, int size)
+        {
+            for (int i = 0; i < size; ++i)
+            {
+                const auto& e = mutationBuffer[start + i];
+                if (e.epoch != epochNow || e.index < 0 || e.index >= fg::kNumSteps)
+                    continue;                                        // made before an edit: dropped
+                steps.steps[(std::size_t) e.index] = e.step;
+                any = true;
+            }
+        };
+        apply (start1, size1);
+        apply (start2, size2);
+    }
+    mutationFifo.finishedRead (size1 + size2);
+    if (any)
+        saveStepsQuietly();
+}
+
+// A manual edit: this is the state UNMUTATE goes back to, and the branches are made again from it.
+void FractalGardenProcessor::markEdit()
+{
+    const int length = juce::jlimit (1, fg::kNumSteps, juce::roundToInt (lengthParam->load()));
+    {
+        const juce::ScopedLock sl (stepLock);
+        undoSteps = steps;
+        undoLength = length;
+        branchSource = steps;
+    }
+    ++branchRevision;
+    saveUndoToState();
+}
+
+void FractalGardenProcessor::renewBranches()
+{
+    {
+        const juce::ScopedLock sl (stepLock);
+        branchSource = steps;
+    }
+    ++branchRevision;
+    saveUndoToState();
+}
+
+void FractalGardenProcessor::setLengthQuietly (int length)
+{
+    lastLengthSeen.store (length);
+    if (auto* p = apvts.getParameter (fg::id::length))
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost (p->convertTo0to1 ((float) length));
+        p->endChangeGesture();
+    }
+}
+
+void FractalGardenProcessor::unmutate()
+{
+    int length;
+    {
+        const juce::ScopedLock sl (stepLock);
+        steps = undoSteps;
+        branchSource = steps;
+        length = undoLength;
+    }
+    ++branchRevision;
+    saveStepsToState();
+    saveUndoToState();
+    if (juce::roundToInt (lengthParam->load()) != length)
+        setLengthQuietly (length);
+}
+
+// RESEED: new random values for the page the editor is showing, or for all 64 steps. The trunk changes for good (UNMUTATE rolls it back);
+// the branches are left as they were (RESEED: BRANCHES makes new ones).
+void FractalGardenProcessor::reseed (fg::ReseedKind kind)
+{
+    const int scale = juce::jlimit (0, fg::kNumScales - 1, juce::roundToInt (scaleParam->load()));
+    const bool page = juce::roundToInt (reseedScopeParam->load()) == 0;
+    const int first = page ? getEditorPage() * fg::kStepsPerPage : 0;
+    const int count = page ? fg::kStepsPerPage : fg::kNumSteps;
+    {
+        const juce::ScopedLock sl (stepLock);
+        fg::reseedSteps (steps, first, count, kind, scale, reseedRng);
+    }
+    saveStepsToState();
+}
+
+void FractalGardenProcessor::reseedBranches()
+{
+    branchSeed.store (((std::uint32_t) juce::Random::getSystemRandom().nextInt() & 0x7fffffffu) | 1u);
+    apvts.state.setProperty (FgParams::kBranchSeedProperty, (int) branchSeed.load(), nullptr);
+    renewBranches();
+}
+
+FractalGardenProcessor::BranchView FractalGardenProcessor::getBranchView() const
+{
+    BranchView v;
+    v.count = fg::branchCountFromKnob (branchParam->load());
+    v.path = fg::pathFromKnob (pathParam->load(), v.count);
+    v.seed = branchSeed.load();
+    return v;
 }
 
 void FractalGardenProcessor::rotateTrunk (int direction)
@@ -91,6 +251,7 @@ void FractalGardenProcessor::rotateTrunk (int direction)
         fg::rotateSteps (steps, length, direction);
     }
     saveStepsToState();
+    renewBranches();
 }
 
 void FractalGardenProcessor::transposeTrunk (int scaleSteps)
@@ -102,6 +263,7 @@ void FractalGardenProcessor::transposeTrunk (int scaleSteps)
         fg::transposeSteps (steps, length, scaleSteps, scale);
     }
     saveStepsToState();
+    renewBranches();
 }
 
 // Resize: the trunk becomes half as long (every other step kept) or twice as long (each step followed by a copy that is OFF), and
@@ -117,17 +279,16 @@ void FractalGardenProcessor::resizeTrunk (int direction)
     if (! changed)
         return;
     saveStepsToState();
-    if (auto* p = apvts.getParameter (fg::id::length))
-    {
-        p->beginChangeGesture();
-        p->setValueNotifyingHost (p->convertTo0to1 ((float) length));
-        p->endChangeGesture();
-    }
+    renewBranches();
+    setLengthQuietly (length);
 }
 
 void FractalGardenProcessor::timerCallback()
 {
+    drainMutations();
     applyPendingButtons();
+    if (lengthEditPending.exchange (false))
+        markEdit();
 
     // The editor's page stays on a page that LENGTH reaches (when LENGTH shrinks, the page follows it down).
     const int lastPage = (juce::jlimit (1, fg::kNumSteps, juce::roundToInt (lengthParam->load())) - 1) / fg::kStepsPerPage;
@@ -204,6 +365,18 @@ void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         }
     }
 
+    // The branch snapshot, the same way.
+    const int branchRev = branchRevision.load();
+    if (branchRev != audioBranchRevision)
+    {
+        const juce::ScopedTryLock tryLock (stepLock);
+        if (tryLock.isLocked())
+        {
+            audioBranchSource = branchSource;
+            audioBranchRevision = branchRev;
+        }
+    }
+
     // 3. The clock decides which notes start and stop in this block.
     fg::PlayerSettings settings;
     settings.rate   = juce::jlimit (0, fg::kNumRates - 1,  juce::roundToInt (rateParam->load()));
@@ -222,7 +395,34 @@ void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     settings.key    = juce::jlimit (0, fg::kNumKeys - 1,   juce::roundToInt (keyParam->load()));
     settings.root   = juce::jlimit (-24, 24,               juce::roundToInt (rootParam->load()));
     settings.resetCount = resetCount.load();
-    const int numEvents = player.process (sampleRate.load(), numSamples, host, settings, audioSteps, events, kMaxEvents);
+    settings.branches = fg::branchCountFromKnob (branchParam->load());
+    settings.path = fg::pathFromKnob (pathParam->load(), settings.branches);
+    settings.branchSeed = branchSeed.load();
+    settings.branchRevision = (std::uint32_t) audioBranchRevision;
+    settings.epoch = (std::uint32_t) audioStepsRevision;
+    settings.mutate = mutateParam->load();
+    settings.microRatchet = microRatchetParam->load();
+    settings.microSlew = microSlewParam->load();
+    settings.microMod = microModParam->load();
+    const int numEvents = player.process (sampleRate.load(), numSamples, host, settings, audioSteps, audioBranchSource, events, kMaxEvents);
+
+    // Changes Mutate made to trunk steps go to the window thread, which saves them.
+    {
+        fg::MutationEvent mutated[64];
+        for (;;)
+        {
+            const int m = player.takeMutations (mutated, 64);
+            if (m <= 0)
+                break;
+            int start1, size1, start2, size2;
+            mutationFifo.prepareToWrite (m, start1, size1, start2, size2);
+            for (int i = 0; i < size1; ++i) mutationBuffer[start1 + i] = mutated[i];
+            for (int i = 0; i < size2; ++i) mutationBuffer[start2 + i] = mutated[size1 + i];
+            mutationFifo.finishedWrite (size1 + size2);
+            if (m < 64)
+                break;
+        }
+    }
 
     // 4. Out: everything that arrived from Logic passes through unchanged, and the sequencer's notes are added at their sample positions.
     const int lastSample = numSamples - 1;
@@ -285,6 +485,7 @@ FractalGardenProcessor::PlayerView FractalGardenProcessor::getPlayerView() const
     v.gate = player.gateOpen();
     v.stepCount = player.stepCount();
     v.noteCount = player.noteCount();
+    v.section = player.currentSection();
     return v;
 }
 
@@ -298,6 +499,66 @@ void FractalGardenProcessor::saveStepsToState()
     }
     apvts.state.setProperty (FgParams::kStepsProperty, juce::Base64::toBase64 (bytes.data(), bytes.size()), nullptr);
     ++stepsRevision;
+}
+
+// Mutation changes arrive many times a second: they are saved with the project but do not make the audio thread copy the steps again
+// (it already has them).
+void FractalGardenProcessor::saveStepsQuietly()
+{
+    std::vector<std::uint8_t> bytes;
+    {
+        const juce::ScopedLock sl (stepLock);
+        bytes = steps.toBytes();
+    }
+    apvts.state.setProperty (FgParams::kStepsProperty, juce::Base64::toBase64 (bytes.data(), bytes.size()), nullptr);
+    ++mutationRevision;
+}
+
+void FractalGardenProcessor::saveUndoToState()
+{
+    std::vector<std::uint8_t> undoBytes, sourceBytes;
+    int length;
+    {
+        const juce::ScopedLock sl (stepLock);
+        undoBytes = undoSteps.toBytes();
+        sourceBytes = branchSource.toBytes();
+        length = undoLength;
+    }
+    apvts.state.setProperty (FgParams::kUndoStepsProperty, juce::Base64::toBase64 (undoBytes.data(), undoBytes.size()), nullptr);
+    apvts.state.setProperty (FgParams::kUndoLengthProperty, length, nullptr);
+    apvts.state.setProperty (FgParams::kBranchSourceProperty, juce::Base64::toBase64 (sourceBytes.data(), sourceBytes.size()), nullptr);
+}
+
+// The unmutate point and the branch snapshot from a saved project. A project saved before 0.6.0 has neither: both start as the steps as they are.
+void FractalGardenProcessor::loadUndoFromState()
+{
+    auto read = [this] (const char* property, fg::StepData& into)
+    {
+        const auto text = apvts.state.getProperty (property).toString();
+        if (text.isEmpty())
+            return false;
+        juce::MemoryOutputStream out;
+        if (! juce::Base64::convertFromBase64 (out, text))
+            return false;
+        fg::StepData loaded;
+        if (! loaded.fromBytes (static_cast<const std::uint8_t*> (out.getData()), out.getDataSize()))
+            return false;
+        into = loaded;
+        return true;
+    };
+    fg::StepData undo, source;
+    const bool haveUndo = read (FgParams::kUndoStepsProperty, undo);
+    const bool haveSource = read (FgParams::kBranchSourceProperty, source);
+    const int length = juce::jlimit (1, fg::kNumSteps, juce::roundToInt (lengthParam->load()));
+    {
+        const juce::ScopedLock sl (stepLock);
+        undoSteps = haveUndo ? undo : steps;
+        branchSource = haveSource ? source : steps;
+        undoLength = haveUndo && apvts.state.hasProperty (FgParams::kUndoLengthProperty)
+                       ? juce::jlimit (1, fg::kNumSteps, (int) apvts.state.getProperty (FgParams::kUndoLengthProperty)) : length;
+    }
+    ++branchRevision;
+    saveUndoToState();
 }
 
 void FractalGardenProcessor::loadStepsFromState()
@@ -345,6 +606,7 @@ void FractalGardenProcessor::setStep (int index, const fg::Step& step)
         steps.steps[(std::size_t) index] = s;
     }
     saveStepsToState();
+    markEdit();                 // a step edited by hand is the new UNMUTATE point and remakes the branches
 }
 
 int FractalGardenProcessor::getEditorTab() const
@@ -391,13 +653,24 @@ void FractalGardenProcessor::setStateInformation (const void* data, int sizeInBy
             pendingRotateLeft.store (0); pendingRotateRight.store (0);
             pendingTransposeDown.store (0); pendingTransposeUp.store (0);
             pendingShrink.store (0); pendingExpand.store (0);
+            pendingUnmutate.store (0); pendingReseedAll.store (0); pendingReseedBranches.store (0); pendingReseedNote.store (0);
+            pendingReseedGate.store (0); pendingReseedSlew.store (0); pendingReseedRatchet.store (0); pendingReseedMod.store (0);
 
             if (apvts.state.hasProperty (FgParams::kSeedProperty))
                 orderSeed.store ((std::uint32_t) (int) apvts.state.getProperty (FgParams::kSeedProperty) | 1u);
             else
                 apvts.state.setProperty (FgParams::kSeedProperty, (int) orderSeed.load(), nullptr);      // a project from 0.3.0 or earlier
 
+            if (apvts.state.hasProperty (FgParams::kBranchSeedProperty))
+                branchSeed.store ((std::uint32_t) (int) apvts.state.getProperty (FgParams::kBranchSeedProperty) | 1u);
+            else
+                apvts.state.setProperty (FgParams::kBranchSeedProperty, (int) branchSeed.load(), nullptr);      // a project from 0.5.0 or earlier
+
             loadStepsFromState();
+            // loading a project is not a change of LENGTH by hand: forget what replaceState reported
+            lastLengthSeen.store (juce::roundToInt (lengthParam->load()));
+            lengthEditPending.store (false);
+            loadUndoFromState();
             switchTransientButtonsOff.store (true);
         }
 }

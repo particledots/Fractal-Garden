@@ -24,13 +24,27 @@
 //  - In Velocity mode the step's Mod value is also the note's velocity (1 to 127); in the other modes the velocity is 100.
 //  CC messages are only produced when PlayerSettings::sendCc is on (the plugin turns it on).
 //
+// Milestones 6 and 7: branches, Path, Mutate and Micro Mutate.
+//  - BRANCHES: the loop becomes the trunk followed by the branches in the order of the chosen path, (branches + 1) x LENGTH steps long. It
+//    is worked out from the same step counter as before, so it stays locked to Logic's bars. Section 0 is the trunk, section b the b-th
+//    branch. The play ORDER (fg/Orders.h) picks the step inside the section; it keeps counting across sections. With no branches nothing
+//    changes from 0.5.0.
+//  - The branches are built from a snapshot of the trunk taken at the last EDIT (the wrapper passes it as branchSource and counts edits in
+//    branchRevision), so Mutate changes to the trunk do not regenerate them. They are rebuilt when the snapshot, the branch count, the path,
+//    the seed, LENGTH or SCALE change. A mutation of a branch step lives in the built branch until the next rebuild.
+//  - MUTATE (default): when a step starts, before it plays, its note and gate may change (fg/Mutate.h). The same moment, MICRO MUTATE may
+//    change its ratchet, slew and mod. A change to a trunk step is written to the trunk and listed for the wrapper (takeMutations), which
+//    saves it with the project. With every knob at 0 no random numbers are drawn and nothing changes.
+//
 // RESET: the step that starts next is played as step 1 of the order and counting goes on from there. Because the order is worked out
 // from (step counter - anchor), nothing else changes. The anchor is forgotten whenever Logic stops, jumps or cycles, so starting
 // playback always locks the pattern back to the song's bars.
 
 #pragma once
 
+#include <fg/Branch.h>
 #include <fg/Mod.h>
+#include <fg/Mutate.h>
 #include <fg/Orders.h>
 #include <fg/Pitch.h>
 #include <fg/Steps.h>
@@ -70,7 +84,27 @@ namespace fg
         bool sendCc = false;         // produce the CC 84 (slew) and CC 1 (mod) messages as well as the notes
 
         std::uint32_t resetCount = 0;   // goes up by one each time RESET is pressed
+
+        int branches = 0;                // 0 to 7
+        int path = 0;                    // 0 to 2 ^ branches - 1
+        std::uint32_t branchSeed = 1;    // which branches a path gives
+        std::uint32_t branchRevision = 0;   // goes up whenever the branches have to be made again from the snapshot (an edit, Reseed Branches, Unmutate)
+        std::uint32_t epoch = 0;         // stamped on the mutations this block produces, so the wrapper can drop ones made before an edit
+
+        double mutate = 0.0;             // the four mutation knobs, 0 to 1 (they act whichever Knob Mode is showing)
+        double microRatchet = 0.0;
+        double microSlew = 0.0;
+        double microMod = 0.0;
     };
+
+    // A change the player made to a trunk step (Mutate or Micro Mutate): the wrapper writes it into the saved steps.
+    struct MutationEvent
+    {
+        std::uint32_t epoch = 0;
+        int index = 0;
+        Step step;
+    };
+    inline constexpr int kMaxMutationLog = 512;
 
     // One thing to send. A note event (cc < 0) starts or stops a note; a CC event (cc >= 0) sends controller number cc with value 0 to 127.
     struct NoteEvent
@@ -104,13 +138,23 @@ namespace fg
 
         // One audio block. Returns how many events were written to out (never more than maxOut; a note-off is never dropped for
         // lack of room: a note-on that does not fit is skipped together with its note-off).
-        int process (double sampleRate, int numSamples, const HostBlock&, const PlayerSettings&, const StepData&, NoteEvent* out, int maxOut);
+        //   trunk         the live trunk; Mutate and Micro Mutate change it in place
+        //   branchSource  the snapshot of the trunk the branches are made from
+        int process (double sampleRate, int numSamples, const HostBlock&, const PlayerSettings&, StepData& trunk, const StepData& branchSource,
+                     NoteEvent* out, int maxOut);
+
+        // The same for a trunk that is not changed (no branches, no mutation): the data is only read.
+        int process (double sampleRate, int numSamples, const HostBlock&, const PlayerSettings&, const StepData& data, NoteEvent* out, int maxOut);
+
+        // The changes made to trunk steps since the last call (oldest first). Returns how many were copied.
+        int takeMutations (MutationEvent* out, int maxOut);
 
         // The note-off for a note that is sounding, if any (used when the plugin is bypassed). Returns 0 or 1.
         int releaseHeld (NoteEvent* out, int maxOut);
 
         // ---- what the window shows (safe to read from any thread) ----
         int currentStep() const        { return shownStep.load (std::memory_order_relaxed); }       // 0 to 63, or -1 when not running
+        int currentSection() const     { return shownSection.load (std::memory_order_relaxed); }    // 0 = trunk, 1 to 7 = branch, -1 when not running
         bool gateOpen() const          { return held.load (std::memory_order_relaxed); }            // a note is sounding
         std::uint32_t stepCount() const { return stepsStarted.load (std::memory_order_relaxed); }   // goes up at every step (on or off)
         std::uint32_t noteCount() const { return notesStarted.load (std::memory_order_relaxed); }   // goes up at every note-on
@@ -141,6 +185,17 @@ namespace fg
         long long nextTickAbs = 0;           // the next 10 ms tick
         long long ccRing[kMaxCcPerSecond] = {};
         int ccRingPos = 0, ccRingCount = 0;
+
+        // branches and mutation
+        BranchSet branchSet;
+        bool branchBuilt = false;
+        std::uint32_t builtRevision = 0, builtSeed = 0;
+        int builtBranches = 0, builtPath = 0, builtLength = 0, builtScale = 0;
+        Rng mutRng;
+        bool rngSeeded = false;
+        MutationEvent mutLog[kMaxMutationLog];
+        int mutLogCount = 0;
+        std::atomic<int> shownSection { -1 };
 
         bool modMoves (const PlayerSettings&) const;
         double modLevel (const PlayerSettings&, double t) const;

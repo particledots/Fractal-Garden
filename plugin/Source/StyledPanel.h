@@ -241,7 +241,8 @@ private:
     juce::String lastLine1, lastLine2, lastCaption;
     bool previewHeader = false, previewLights = false;
     juce::String previewLine1, previewLine2;
-    int previewTreePlay = -1;                   // -1 = nothing playing (branches come in milestone 6)
+    int previewTreePlay = -1;                   // pictures and checks only: >= 0 shows that part (0 = trunk) as playing
+    int liveTreeSection = -1;                   // the part Logic's playback is on: 0 = trunk, 1 to 7 = branch, -1 = not playing
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FractalGardenStyledPanel)
 };

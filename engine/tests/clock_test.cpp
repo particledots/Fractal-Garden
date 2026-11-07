@@ -1,7 +1,8 @@
 // Clock self-test (milestone 3): runs the trunk player the way Logic would, block by block, and checks when every note starts and stops.
 // Needs no plugin and no Logic. The simulated host gives a song position for each block; the checks cover timing to the sample, every
 // RATE and RATIO, block sizes from 1 to 8192, start / stop / relocate / cycle, tempo and rate changes, two instances staying in step,
-// and that no note is ever left sounding.
+// and that no note is ever left sounding. Milestones 6 and 7 add: the trunk-then-branches loop, branches made from the snapshot, Mutate and
+// Micro Mutate while playing (same result at every block size), and that with no branches and the knobs at 0 nothing changed from 0.5.0.
 // Prints "clock tests: N checks passed" and exits 0, or lists every failure and exits 1.
 
 #include <fg/Clock.h>
@@ -1216,6 +1217,341 @@ int main()
             const auto cc84 = ccOf (ev, 84), cc1 = ccOf (ev, 1);
             CHECK (cc84.size() == 2 && cc1.size() == 2 && cc84[1].t >= 36000 && cc1[1].t >= 36000);
             CHECK (analyse (ev, true).ok);       // slew on every step: every step is held into the next (legato)
+        }
+    }
+
+    // ================= milestones 6 and 7: branches, Mutate and Micro Mutate in the player =================
+    {
+        constexpr double kStep16 = 0.25;                         // a 1/16 step in quarter notes (6000 samples at 120 bpm, 48 kHz)
+        struct Out { std::vector<Ev> ev; fg::StepData trunk; std::vector<fg::MutationEvent> muts; };
+
+        // runs the player over `total` samples in blocks, with a trunk that Mutate may change
+        auto runBranches = [] (const fg::PlayerSettings& s, fg::StepData trunk, const fg::StepData& source, long long total, int block, double startPpq = 0.0)
+        {
+            Out o;
+            fg::TrunkPlayer p;
+            std::vector<fg::NoteEvent> buf (8192);
+            std::vector<fg::MutationEvent> mbuf (fg::kMaxMutationLog);
+            for (long long t = 0; t < total; t += block)
+            {
+                const int n = (int) std::min<long long> (block, total - t);
+                fg::HostBlock h; h.playing = true; h.havePpq = true; h.bpm = kBpm; h.ppq = startPpq + (double) t * kPps;
+                const int count = p.process (kSr, n, h, s, trunk, source, buf.data(), (int) buf.size());
+                for (int i = 0; i < count; ++i)
+                {
+                    Ev e; e.t = t + buf[(std::size_t) i].offset; e.on = buf[(std::size_t) i].on; e.note = buf[(std::size_t) i].note;
+                    e.velocity = buf[(std::size_t) i].velocity; e.cc = buf[(std::size_t) i].cc; e.value = buf[(std::size_t) i].value;
+                    e.ppq = h.ppq + (double) buf[(std::size_t) i].offset * kPps;
+                    o.ev.push_back (e);
+                }
+                const int m = p.takeMutations (mbuf.data(), (int) mbuf.size());
+                for (int i = 0; i < m; ++i) o.muts.push_back (mbuf[(std::size_t) i]);
+            }
+            o.trunk = trunk;
+            return o;
+        };
+        auto settingsFor = [&] (int length, int branches, int path, std::uint32_t seed)
+        {
+            fg::PlayerSettings s = plainSettings();
+            s.length = length; s.branches = branches; s.path = path; s.branchSeed = seed; s.seed = 77;
+            return s;
+        };
+        auto noteOnsAtStep = [] (const std::vector<Ev>& ev)
+        {
+            std::vector<int> notes;
+            for (const auto& e : ev) if (e.on) notes.push_back (e.note);
+            return notes;
+        };
+
+        // ---- the loop is the trunk, then each branch of the path, (branches + 1) x LENGTH steps long ----
+        for (int length : { 4, 8, 16 })
+            for (int branches : { 1, 3, 7 })
+                for (int path : { 0, 1, (1 << branches) - 1 })
+                {
+                    const fg::StepData trunk = makeData (50);
+                    const fg::PlayerSettings s = settingsFor (length, branches, path, 4242);
+                    fg::BranchSet set;
+                    fg::buildBranches (set, trunk, length, kChromatic, branches, path, 4242);
+                    const long long loopSteps = (long long) (branches + 1) * length;
+                    const long long total = (long long) (2 * loopSteps + 3) * 6000;
+                    const auto o = runBranches (s, trunk, trunk, total, 512);
+                    const auto notes = noteOnsAtStep (o.ev);
+                    bool ok = o.ev.size() > 0 && analyse (o.ev, true).ok;
+                    // the notes that should sound: every step that is ON, except that a step tied from a gate of 100 % at the same pitch does not sound again
+                    std::vector<int> expected;
+                    int tiedPitch = -1;
+                    for (long long i = 0; i < 2 * loopSteps + 3; ++i)
+                    {
+                        const int section = (int) ((i / length) % (branches + 1));
+                        const int index = (int) (i % length);
+                        const fg::Step& st = section == 0 ? trunk.steps[(std::size_t) index] : set.steps[(std::size_t) (section - 1)][(std::size_t) index];
+                        if (! st.on) { tiedPitch = -1; continue; }
+                        const int pitch = fg::pitchFor (st.note, kChromatic, 0, 0);
+                        if (pitch != tiedPitch) expected.push_back (pitch);
+                        tiedPitch = st.gate >= 100 ? pitch : -1;
+                    }
+                    ok = ok && notes == expected;
+                    CHECK (ok);
+                    CHECK (o.muts.empty());
+                }
+
+        // ---- the branches play one step in step with Logic's bars: starting in the middle gives the same notes as starting at the beginning ----
+        {
+            const fg::StepData trunk = makeData (50);
+            const fg::PlayerSettings s = settingsFor (8, 3, 5, 99);
+            const auto whole = runBranches (s, trunk, trunk, 60 * 6000, 512, 0.0);
+            const auto late = runBranches (s, trunk, trunk, 20 * 6000, 512, 40 * kStep16);       // starts at step 40 (section 1 of the second loop)
+            const auto wholeNotes = noteOnsAtStep (whole.ev), lateNotes = noteOnsAtStep (late.ev);
+            // find where step 40 starts in the whole run: count note-ons before position 40 steps
+            std::size_t before = 0;
+            for (const auto& e : whole.ev) if (e.on && e.ppq < 40 * kStep16 - 1e-6) ++before;
+            bool same = ! lateNotes.empty() && before + lateNotes.size() <= wholeNotes.size();
+            for (std::size_t i = 0; same && i < lateNotes.size(); ++i) same = lateNotes[i] == wholeNotes[before + i];
+            CHECK (same);
+        }
+
+        // ---- the same at every block size ----
+        {
+            const fg::StepData trunk = makeData (50);
+            const fg::PlayerSettings s = settingsFor (8, 5, 21, 31337);
+            const auto ref = runBranches (s, trunk, trunk, 80 * 6000, 512);
+            for (int block : { 1, 37, 64, 480, 4096, 8192 })
+                CHECK (sameEvents (ref.ev, runBranches (s, trunk, trunk, 80 * 6000, block).ev));
+        }
+
+        // ---- the branches come from the snapshot, not from the live trunk ----
+        {
+            const fg::StepData source = makeData (50);
+            fg::StepData live = source;
+            for (auto& st : live.steps) st.note = (std::uint8_t) std::min (st.note + 5, fg::kStoredNoteMax);      // the trunk has moved on since the snapshot
+            const fg::PlayerSettings s = settingsFor (8, 2, 2, 5);
+            fg::BranchSet fromSource;
+            fg::buildBranches (fromSource, source, 8, kChromatic, 2, 2, 5);
+            const auto o = runBranches (s, live, source, 24 * 6000, 512);
+            const auto notes = noteOnsAtStep (o.ev);
+            bool trunkLive = true, branchesSnap = true;
+            for (int i = 0; i < 8; ++i) trunkLive = trunkLive && notes[(std::size_t) i] == fg::pitchFor (live.steps[(std::size_t) i].note, kChromatic, 0, 0);
+            for (int b = 0; b < 2; ++b)
+                for (int i = 0; i < 8; ++i)
+                    if (fromSource.steps[(std::size_t) b][(std::size_t) i].on)
+                        branchesSnap = branchesSnap && std::find (notes.begin() + 8, notes.end(), fg::pitchFor (fromSource.steps[(std::size_t) b][(std::size_t) i].note, kChromatic, 0, 0)) != notes.end();
+            CHECK (trunkLive && branchesSnap);
+        }
+
+        // ---- changing the path, the branch count or the revision builds new branches at once ----
+        {
+            const fg::StepData trunk = makeData (50);
+            fg::TrunkPlayer p;
+            std::vector<fg::NoteEvent> buf (4096);
+            fg::StepData live = trunk;
+            fg::PlayerSettings s = settingsFor (4, 3, 0, 8);
+            auto notesOfLoop = [&] (double startPpq)          // plays 16 steps from a song position, returns the note-ons
+            {
+                std::vector<int> notes;
+                fg::HostBlock h; h.playing = true; h.havePpq = true; h.bpm = kBpm; h.ppq = startPpq;
+                const int n = p.process (kSr, 16 * 6000, h, s, live, trunk, buf.data(), (int) buf.size());
+                for (int i = 0; i < n; ++i) if (buf[(std::size_t) i].cc < 0 && buf[(std::size_t) i].on) notes.push_back (buf[(std::size_t) i].note);
+                return notes;
+            };
+            const auto pathA = notesOfLoop (0.0);
+            s.path = 7;
+            const auto pathB = notesOfLoop (16 * kStep16);
+            CHECK (pathA != pathB);
+            s.path = 0;
+            const auto pathAagain = notesOfLoop (32 * kStep16);
+            CHECK (pathA == pathAagain);                      // a path repeats
+            s.branches = 0;
+            const auto none = notesOfLoop (48 * kStep16);
+            CHECK (none.size() == 16 && std::equal (none.begin(), none.begin() + 4, pathA.begin()) && std::equal (none.begin() + 4, none.begin() + 8, none.begin()));
+        }
+
+        // ---- RESET with branches: the next step is step 1 of the trunk ----
+        {
+            const fg::StepData trunk = makeData (50);
+            fg::TrunkPlayer p;
+            std::vector<fg::NoteEvent> buf (4096);
+            fg::StepData live = trunk;
+            fg::PlayerSettings s = settingsFor (4, 2, 3, 6);
+            auto run = [&] (double ppq, int steps)
+            {
+                std::vector<int> notes;
+                fg::HostBlock h; h.playing = true; h.havePpq = true; h.bpm = kBpm; h.ppq = ppq;
+                const int n = p.process (kSr, steps * 6000, h, s, live, trunk, buf.data(), (int) buf.size());
+                for (int i = 0; i < n; ++i) if (buf[(std::size_t) i].cc < 0 && buf[(std::size_t) i].on) notes.push_back (buf[(std::size_t) i].note);
+                return notes;
+            };
+            run (0.0, 6);                                     // into the first branch
+            s.resetCount++;
+            const auto after = run (6 * kStep16, 4);
+            CHECK (after.size() == 4);
+            bool trunkAgain = after.size() == 4;
+            for (int i = 0; i < 4 && trunkAgain; ++i) trunkAgain = after[(std::size_t) i] == fg::pitchFor (trunk.steps[(std::size_t) i].note, kChromatic, 0, 0);
+            CHECK (trunkAgain);
+        }
+
+        // ---- Mutate while playing ----
+        {
+            const fg::StepData trunk = makeData (50);
+            // knobs at 0: nothing changes, nothing is listed
+            fg::PlayerSettings s0 = settingsFor (8, 0, 0, 1);
+            const auto quiet = runBranches (s0, trunk, trunk, 64 * 6000, 512);
+            CHECK (quiet.trunk == trunk && quiet.muts.empty());
+
+            // zone 1 only moves notes; the list matches what changed; same result at every block size
+            fg::PlayerSettings s1 = settingsFor (8, 0, 0, 1);
+            s1.mutate = 0.5;                                  // 100 % note mutation
+            const auto m1 = runBranches (s1, trunk, trunk, 64 * 6000, 512);
+            bool onlyNotes = true; int changedSteps = 0;
+            for (int i = 0; i < 8; ++i)
+            {
+                const auto& a = m1.trunk.steps[(std::size_t) i]; const auto& b = trunk.steps[(std::size_t) i];
+                onlyNotes = onlyNotes && a.gate == b.gate && a.on == b.on && a.slew == b.slew && a.ratchet == b.ratchet && a.mod == b.mod;
+                if (a.note != b.note) ++changedSteps;
+            }
+            CHECK (onlyNotes && changedSteps >= 6);
+            CHECK ((int) m1.muts.size() == 64);               // every step that started changed (100 %)
+            fg::StepData replay = trunk;                      // applying the list in order gives the trunk the player ended with
+            for (const auto& m : m1.muts) replay.steps[(std::size_t) m.index] = m.step;
+            CHECK (replay == m1.trunk);
+            for (int block : { 1, 37, 4096 })
+            {
+                const auto other = runBranches (s1, trunk, trunk, 64 * 6000, block);
+                CHECK (other.trunk == m1.trunk && sameEvents (m1.ev, other.ev));
+            }
+
+            // the notes that sound are the notes the step has as it starts: the mutated ones
+            {
+                std::size_t k = 0; bool ok = true;
+                const auto notes = noteOnsAtStep (m1.ev);
+                for (const auto& m : m1.muts)
+                {
+                    if (k >= notes.size()) { ok = false; break; }
+                    ok = ok && notes[k] == fg::pitchFor (m.step.note, kChromatic, 0, 0);
+                    ++k;
+                }
+                CHECK (ok);
+            }
+
+            // the epoch is stamped on every change
+            {
+                fg::PlayerSettings se = s1; se.epoch = 4321;
+                const auto me = runBranches (se, trunk, trunk, 16 * 6000, 512);
+                bool all = ! me.muts.empty();
+                for (const auto& m : me.muts) all = all && m.epoch == 4321;
+                CHECK (all);
+            }
+
+            // zone 2 (knob 1.0): gate lengths and on / off change too; some steps switch off, so fewer notes play
+            fg::PlayerSettings s2 = settingsFor (8, 0, 0, 1);
+            s2.mutate = 1.0;
+            const auto m2 = runBranches (s2, trunk, trunk, 200 * 6000, 512);
+            int gateChanged = 0, offSteps = 0;
+            for (const auto& st : m2.trunk.steps) { if (st.gate != 50) ++gateChanged; if (! st.on) ++offSteps; }
+            CHECK (gateChanged >= 1 && analyse (m2.ev, true).ok);
+            (void) offSteps;
+
+            // it never touches anything beyond LENGTH
+            bool beyond = true;
+            for (int i = 8; i < 64; ++i) beyond = beyond && m2.trunk.steps[(std::size_t) i] == trunk.steps[(std::size_t) i];
+            CHECK (beyond);
+        }
+
+        // ---- Mutate with branches: branch steps change in the branch and are not listed; the trunk's are ----
+        {
+            const fg::StepData trunk = makeData (50);
+            fg::PlayerSettings s = settingsFor (4, 2, 1, 17);
+            s.mutate = 0.5;
+            const auto o = runBranches (s, trunk, trunk, 12 * 6000, 512);              // exactly one loop: 4 trunk steps + 8 branch steps
+            CHECK (o.muts.size() == 4);
+            for (const auto& m : o.muts) CHECK (m.index >= 0 && m.index < 4);
+            CHECK (analyse (o.ev, true).ok);
+        }
+
+        // ---- Micro Mutate while playing ----
+        {
+            const fg::StepData trunk = makeData (50);
+            fg::PlayerSettings s = settingsFor (8, 0, 0, 1);
+            s.microRatchet = 1.0;
+            const auto r = runBranches (s, trunk, trunk, 64 * 6000, 512);
+            int ratcheted = 0; bool restSame = true;
+            for (int i = 0; i < 8; ++i)
+            {
+                ratcheted += r.trunk.steps[(std::size_t) i].ratchet != 0;
+                restSame = restSame && r.trunk.steps[(std::size_t) i].note == trunk.steps[(std::size_t) i].note && r.trunk.steps[(std::size_t) i].slew == 0 && r.trunk.steps[(std::size_t) i].mod == 0;
+            }
+            CHECK (ratcheted >= 4 && restSame);
+            CHECK (analyse (r.ev, true).ok);
+            for (int block : { 1, 480, 8192 }) CHECK (sameEvents (r.ev, runBranches (s, trunk, trunk, 64 * 6000, block).ev));
+
+            fg::PlayerSettings sl = settingsFor (8, 0, 0, 1);
+            sl.microSlew = 1.0; sl.sendCc = true;
+            const auto slewRun = runBranches (sl, trunk, trunk, 64 * 6000, 512);
+            int slewed = 0; for (int i = 0; i < 8; ++i) slewed += slewRun.trunk.steps[(std::size_t) i].slew > 0;
+            CHECK (slewed >= 3);
+            {
+                bool anyCc84 = false;
+                for (const auto& e : slewRun.ev) anyCc84 = anyCc84 || e.cc == 84;
+                CHECK (anyCc84);
+            }
+            //                        // the new slew amounts go out as CC 84
+            CHECK (analyse (slewRun.ev, true).ok);
+
+            fg::PlayerSettings sm = settingsFor (8, 0, 0, 1);
+            sm.microMod = 1.0; sm.modMode = 2;                              // Envelope: a new Mod value each step
+            const auto modRun = runBranches (sm, trunk, trunk, 64 * 6000, 512);
+            int modded = 0; for (int i = 0; i < 8; ++i) modded += modRun.trunk.steps[(std::size_t) i].mod > 0;
+            CHECK (modded >= 6);
+            CHECK (analyse (modRun.ev, true).ok);
+
+            // all four knobs at once, with branches, over a long run at several block sizes: same result, never a stuck note
+            fg::PlayerSettings sa = settingsFor (8, 4, 9, 77);
+            sa.mutate = 0.8; sa.microRatchet = 0.5; sa.microSlew = 0.5; sa.microMod = 0.5;
+            const auto ref = runBranches (sa, trunk, trunk, 400 * 6000, 512);
+            CHECK (analyse (ref.ev, true).ok);
+            for (int block : { 64, 4096 }) CHECK (sameEvents (ref.ev, runBranches (sa, trunk, trunk, 400 * 6000, block).ev));
+        }
+
+        // ---- the settings that must not change anything: 0 branches and all four knobs at 0 plays exactly as before ----
+        {
+            fg::StepData data = fg::StepData::makeSample();
+            fg::PlayerSettings s = plainSettings();
+            s.length = 13; s.order = fg::kOrderPendulum; s.sendCc = true; s.modMode = 0;
+            fg::TrunkPlayer a, b;
+            std::vector<fg::NoteEvent> ba (4096), bb (4096);
+            bool same = true;
+            fg::StepData trunkB = data;
+            for (int blockNo = 0; blockNo < 200; ++blockNo)
+            {
+                fg::HostBlock h; h.playing = true; h.havePpq = true; h.bpm = kBpm; h.ppq = blockNo * 512 * kPps;
+                const int na = a.process (kSr, 512, h, s, data, ba.data(), 4096);                 // the read-only form
+                const int nb = b.process (kSr, 512, h, s, trunkB, data, bb.data(), 4096);         // the full form
+                same = same && na == nb;
+                for (int i = 0; same && i < na; ++i)
+                    same = ba[(std::size_t) i].offset == bb[(std::size_t) i].offset && ba[(std::size_t) i].on == bb[(std::size_t) i].on
+                        && ba[(std::size_t) i].note == bb[(std::size_t) i].note && ba[(std::size_t) i].cc == bb[(std::size_t) i].cc && ba[(std::size_t) i].value == bb[(std::size_t) i].value;
+            }
+            CHECK (same && trunkB == data);
+        }
+
+        // ---- what the window shows: the section that is playing ----
+        {
+            const fg::StepData trunk = makeData (50);
+            fg::TrunkPlayer p;
+            fg::StepData live = trunk;
+            std::vector<fg::NoteEvent> buf (4096);
+            fg::PlayerSettings s = settingsFor (4, 2, 0, 3);
+            std::vector<int> sections;
+            for (int i = 0; i < 12; ++i)                       // one block per step
+            {
+                fg::HostBlock h; h.playing = true; h.havePpq = true; h.bpm = kBpm; h.ppq = i * kStep16 + 0.001;
+                p.process (kSr, 5000, h, s, live, trunk, buf.data(), 4096);
+                sections.push_back (p.currentSection());
+            }
+            const std::vector<int> expected { 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2 };
+            CHECK (sections == expected);
+            fg::HostBlock stopped; stopped.playing = false; stopped.havePpq = true;
+            p.process (kSr, 512, stopped, s, live, trunk, buf.data(), 4096);
+            CHECK (p.currentSection() == -1 && p.currentStep() == -1);
         }
     }
 

@@ -41,9 +41,13 @@ namespace fg
         sampleClock = 0;
         nextTickAbs = 0;
         ccRingPos = ccRingCount = 0;
+        branchBuilt = false;
+        rngSeeded = false;
+        mutLogCount = 0;
         held.store (false);
         isRunning.store (false);
         shownStep.store (-1);
+        shownSection.store (-1);
     }
 
     int TrunkPlayer::releaseHeld (NoteEvent* out, int maxOut)
@@ -61,7 +65,27 @@ namespace fg
         lastCc1 = lastCc84 = -1;
         isRunning.store (false);
         shownStep.store (-1);
+        shownSection.store (-1);
         return n;
+    }
+
+    int TrunkPlayer::takeMutations (MutationEvent* out, int maxOut)
+    {
+        const int n = std::min (mutLogCount, maxOut);
+        for (int i = 0; i < n; ++i)
+            out[i] = mutLog[i];
+        mutLogCount = 0;
+        return n;
+    }
+
+    int TrunkPlayer::process (double sampleRate, int numSamples, const HostBlock& host, const PlayerSettings& settings,
+                              const StepData& data, NoteEvent* out, int maxOut)
+    {
+        StepData copy = data;                         // nothing here may change it: no branches, no mutation (the settings are forced off)
+        PlayerSettings plain = settings;
+        plain.branches = 0;
+        plain.mutate = plain.microRatchet = plain.microSlew = plain.microMod = 0.0;
+        return process (sampleRate, numSamples, host, plain, copy, data, out, maxOut);
     }
 
     // Whether the Mod value changes during the current step (so it has to be sampled every 10 ms).
@@ -89,7 +113,7 @@ namespace fg
     }
 
     int TrunkPlayer::process (double sampleRate, int numSamples, const HostBlock& host, const PlayerSettings& settings,
-                              const StepData& data, NoteEvent* out, int maxOut)
+                              StepData& data, const StepData& branchSource, NoteEvent* out, int maxOut)
     {
         int n = 0;
         const int lastSample = numSamples > 0 ? numSamples - 1 : 0;
@@ -154,10 +178,46 @@ namespace fg
             ccRingPos = ccRingCount = 0;
             seenResetCount = settings.resetCount;       // RESET while stopped has nothing to restart
             shownStep.store (-1);
+            shownSection.store (-1);
             return n;
         }
 
         const int length = std::clamp (settings.length, 1, kNumSteps);
+        const int branchCount = std::clamp (settings.branches, 0, kMaxBranches);
+        if (branchCount == 0)
+            branchBuilt = false;
+        else
+        {
+            const int path = std::clamp (settings.path, 0, pathCountFor (branchCount) - 1);
+            const int scale = std::clamp (settings.scale, 0, kNumScales - 1);
+            if (! branchBuilt || builtRevision != settings.branchRevision || builtSeed != settings.branchSeed || builtBranches != branchCount
+                || builtPath != path || builtLength != length || builtScale != scale)
+            {
+                buildBranches (branchSet, branchSource, length, scale, branchCount, path, settings.branchSeed);
+                branchBuilt = true;
+                builtRevision = settings.branchRevision; builtSeed = settings.branchSeed; builtBranches = branchCount;
+                builtPath = path; builtLength = length; builtScale = scale;
+            }
+        }
+        const bool mutating = settings.mutate > 0.0 || settings.microRatchet > 0.0 || settings.microSlew > 0.0 || settings.microMod > 0.0;
+
+        // Where step counter value kk plays: which section (0 = trunk, 1.. = branch) and which step of it.
+        auto locate = [&] (long long kk, int& section, int& index)
+        {
+            const long long local = kk - anchorK;
+            index = orderStepIndex (local, length, settings.order, settings.pendRepeat, settings.seed, settings.chance);
+            if (branchCount == 0)
+                section = 0;
+            else
+            {
+                const long long passes = (long long) std::floor ((double) local / (double) length);
+                section = (int) (((passes % (branchCount + 1)) + (branchCount + 1)) % (branchCount + 1));
+            }
+        };
+        auto stepRef = [&] (int section, int index) -> Step&
+        {
+            return section == 0 ? data.steps[(std::size_t) index] : branchSet.steps[(std::size_t) (section - 1)][(std::size_t) index];
+        };
         const double bpm = host.bpm > 0.0 ? host.bpm : 120.0;
         const double pps = bpm / 60.0 / sampleRate;                 // quarter notes per sample
         const double ppq0 = host.ppq;
@@ -185,8 +245,10 @@ namespace fg
         // Where the position is now, for the window (the steps that start inside this block update it below).
         if (! continuing)
         {
-            shownStep.store (orderStepIndex ((long long) std::floor ((ppq0 + eps) / stepLen), length, settings.order, settings.pendRepeat,
-                                             settings.seed, settings.chance));
+            int section0, index0;
+            locate ((long long) std::floor ((ppq0 + eps) / stepLen), section0, index0);
+            shownStep.store (index0);
+            shownSection.store (section0);
             // "the last boundary handled" is the one just before the first boundary this run will handle
             lastBoundaryPpq = (double) ((long long) std::ceil ((ppq0 - eps) / stepLen) - 1) * stepLen;
         }
@@ -250,17 +312,42 @@ namespace fg
                 // A step starts here.
                 const int offset = toOffset (b);
                 const long long boundaryAbs = blockStartAbs + std::clamp (offset, 0, lastSample);
-                const int index = orderStepIndex (k - anchorK, length, settings.order, settings.pendRepeat, settings.seed, settings.chance);
-                const Step& step = data.steps[(std::size_t) index];
+                int section, index;
+                locate (k, section, index);
+                Step& stored = stepRef (section, index);
+                if (mutating)
+                {
+                    // Mutate and Micro Mutate change the step as it starts, before it plays (and for good).
+                    if (! rngSeeded)
+                    {
+                        mutRng = Rng ((std::uint64_t) settings.seed ^ 0xa5a5a5a5ULL);
+                        rngSeeded = true;
+                    }
+                    bool changed = defaultMutate (stored, settings.mutate, settings.scale, mutRng);
+                    changed = microMutate (stored, settings.microRatchet, settings.microSlew, settings.microMod, settings.modMode, mutRng) || changed;
+                    if (changed)
+                    {
+                        stored.clamp();
+                        if (section == 0 && mutLogCount < kMaxMutationLog)
+                            mutLog[mutLogCount++] = MutationEvent { settings.epoch, index, stored };
+                    }
+                }
+                const Step step = stored;                   // a copy: what plays is what the step was as it started
                 shownStep.store (index);
+                shownSection.store (section);
                 stepsStarted.fetch_add (1);
                 lastBoundaryPpq = b;
 
                 // Where a Smooth glide starts: the level the step before ended on.
-                const double prevLevel = stepActive
-                    ? stepLevel (curStep)
-                    : stepLevel (data.steps[(std::size_t) orderStepIndex (k - 1 - anchorK, length, settings.order, settings.pendRepeat,
-                                                                           settings.seed, settings.chance)]);
+                double prevLevel;
+                if (stepActive)
+                    prevLevel = stepLevel (curStep);
+                else
+                {
+                    int prevSection, prevIndex;
+                    locate (k - 1, prevSection, prevIndex);
+                    prevLevel = stepLevel (stepRef (prevSection, prevIndex));
+                }
 
                 const int pulses = kRatchetAmounts[std::min (kRatchetMax, (int) step.ratchet)];
                 // A tie: the note that is sounding was left open (gate 100 %, or the next step has slew) and this step plays. A tie needs
@@ -331,8 +418,9 @@ namespace fg
                         if (! open)
                         {
                             // The next step has slew: hold this note up to it so a mono synth can glide.
-                            const Step& next = data.steps[(std::size_t) orderStepIndex (k + 1 - anchorK, length, settings.order, settings.pendRepeat,
-                                                                                         settings.seed, settings.chance)];
+                            int nextSection, nextIndex;
+                            locate (k + 1, nextSection, nextIndex);
+                            const Step& next = stepRef (nextSection, nextIndex);
                             open = next.on && next.slew > 0;
                         }
                         gateOffPpq = open ? -1.0 : b + std::min (std::max (fraction * stepLen, minNote), stepLen);

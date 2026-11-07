@@ -20,4 +20,8 @@ namespace FgParams
     inline constexpr const char* kPageProperty  = "editorPage";    // 0 to 7
     inline constexpr const char* kViewProperty  = "editorView";    // "styled" or "plain"
     inline constexpr const char* kSeedProperty  = "orderSeed";     // seed of the random orders, chosen when an instance is first made
+    inline constexpr const char* kUndoStepsProperty    = "undoSteps";      // the steps as they were after the last manual edit (what UNMUTATE goes back to)
+    inline constexpr const char* kUndoLengthProperty   = "undoLength";     // LENGTH at that moment
+    inline constexpr const char* kBranchSourceProperty = "branchSource";   // the trunk snapshot the branches are made from (taken at the last edit)
+    inline constexpr const char* kBranchSeedProperty   = "branchSeed";     // which branches a path gives; RESEED: BRANCHES draws a new one
 }

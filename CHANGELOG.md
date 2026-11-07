@@ -3,6 +3,16 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
+Version 0.6.0 (milestones 6 and 7 merged: Branch, Path, Mutate, Micro Mutate, Reseed, Unmutate, TREE letters; **not yet tested in Logic**).
+
+- New `fg/Mutate.h` / `Mutate.cpp`: seeded random generator, Default Mutate (two zones), Micro Mutate, Reseed ranges for every kind.
+- New `fg/Branch.h` / `Branch.cpp`: Reverse, Inverse, Transpose, Mutate, Randomize; Path as a binary tree with the seed, so a path repeats; branches are a pure function of (snapshot, LENGTH, SCALE, count, path, seed).
+- Trunk player: sections (trunk, then branches); Mutate and Micro Mutate change the step as it starts and log trunk changes for the window thread; with branches 0 and knobs 0 the output equals 0.5.0 exactly.
+- Plugin: mutations are saved by the window thread (changes made before a newer edit are dropped); edits set the Unmutate point and the branch snapshot; Rotate, Transpose and Resize make the branches again; Unmutate restores steps and LENGTH; seven Reseed buttons with Page / All 64 scope; branch seed, Unmutate point and branch snapshot are saved with the project; TREE letters come from the same function as the player; the header says TRUNK or BRANCH n.
+- Manual gaps: see the project file "Fractal-Garden manual gaps ledger" (G-64 onward; G-01 to G-04, G-07, G-14, G-16, G-18, G-33 now BUILT).
+- No new controls; all 46 ids unchanged.
+- Checks: engine 166,852; clock 1,002,437; window and plugin test 333.
+
 Version 0.5.0 (milestone 5, gate length with ties, ratchet, slew, mod and resize; **tested in Logic on 7 November 2026: "all good", finished**).
 
 - New `fg/Mod.h` / `Mod.cpp`: CC numbers (Mod 1, Slew 84), the eight Mod shapes, the sixteen Mod rates (one-shot, ratchet, halves, quarters, two fixed levels), Envelope and Smooth curves, 0..1 to 0..127.
