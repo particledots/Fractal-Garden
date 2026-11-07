@@ -3,7 +3,13 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
-Version 0.8.0 (milestones 9 and 10, first part: pattern bank and settings page; **built and checked automatically on 7 November 2026, waiting for the Logic test**).
+Version 1.0.0 (milestones 9 and 10, release; **0.8.0 was tested in Logic on 7 November 2026 and worked; 1.0.0 changes only the version number and the documents**).
+
+- Version number 1.0.0. No change to the engine, the panel, the 65 controls or the saved state: a 0.8.0 project opens in 1.0.0 exactly as it was.
+- README and CHANGELOG finished; the manual gaps ledger is complete (G-01 to G-138). Open items there: G-08 (unquantized scale / pitch bend, LATER) and G-138 (canon patch: not built; Logic's copy of plug-in settings plus ROTATE is the suggested way).
+- Automatic checks unchanged from 0.8.0: engine 179,965; clock 6,405,691; window and plugin test 441.
+
+Version 0.8.0 (milestones 9 and 10, first part: pattern bank and settings page; **tested in Logic on 7 November 2026: "sounds incredible and phenomenal. all good."**).
 
 - New `fg/Patterns.h` / `Patterns.cpp`: the 16-slot pattern bank. A slot holds the 64 steps and LENGTH; the saved form is versioned and damaged data is refused without changing anything.
 - Plugin: PATTERN LOAD and SAVE are counted like the other buttons and carried out on the window thread. SAVE stores the steps and LENGTH; LOAD replaces them (an empty slot does nothing), sets the UNMUTATE point and makes the branches again. The bank is saved with the project; loading a project resets the pending button counts and never acts on a button that was on when it was saved.
