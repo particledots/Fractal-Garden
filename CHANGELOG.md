@@ -3,7 +3,7 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
-Version 0.7.0 (milestone 8, Performance mode and ornamentation; automatic checks done 7 November 2026, **waiting for the Logic test**).
+Version 0.7.0 (milestone 8, Performance mode and ornamentation; **tested in Logic on 7 November 2026: "sounds fabulous", finished**).
 
 - New `fg/Perform.h` / `Perform.cpp`: the zones of Ratchet FX, Slew FX and Mutate FX, the fifteen ornaments (seven two-note, seven four-note, the eight-note trill) and `performStep`, a pure function of (stored step, step counter, seed, knobs): no running random stream, so a step's effect is the same at any block size and when the player looks ahead at the next step.
 - Trunk player: when a step starts, a copy gets the effects and the copy plays (ratchet, slew CC 84 and the glide hold use it). Stored steps, the mutation log, Unmutate and the saved pattern are untouched. Ornaments play eighth notes (half a step each, 80 % long) from the start of their step and take over the steps they cover. With the three knobs at 0 nothing is drawn: the output is identical to 0.6.0.
