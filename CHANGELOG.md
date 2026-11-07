@@ -3,7 +3,7 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
-Version 0.6.0 (milestones 6 and 7 merged: Branch, Path, Mutate, Micro Mutate, Reseed, Unmutate, TREE letters; **not yet tested in Logic**).
+Version 0.6.0 (milestones 6 and 7 merged: Branch, Path, Mutate, Micro Mutate, Reseed, Unmutate, TREE letters; **tested in Logic on 7 November 2026: "all looks good", finished**).
 
 - New `fg/Mutate.h` / `Mutate.cpp`: seeded random generator, Default Mutate (two zones), Micro Mutate, Reseed ranges for every kind.
 - New `fg/Branch.h` / `Branch.cpp`: Reverse, Inverse, Transpose, Mutate, Randomize; Path as a binary tree with the seed, so a path repeats; branches are a pure function of (snapshot, LENGTH, SCALE, count, path, seed).

@@ -4,7 +4,7 @@ An original AU / VST3 **MIDI effect** for Logic Pro, inspired by the feel of a E
 sequencer (the Qu-Bit Electronix Bloom v2): 64 steps, branches that grow from a trunk, and knobs that mutate the pattern. All code is
 our own; it is not a port or copy of anything, and it is not affiliated with Qu-Bit Electronix.
 
-**Status: version 0.6.0 (milestones 6 and 7 merged: Branch, Path, Mutate, Micro Mutate, Reseed, Unmutate and the TREE letters). Built and checked automatically; waiting for the Logic test.** Milestone 5 (0.5.0) was tested in Logic on 7 November 2026: Bryn reported "all good", and it is finished. Milestone 4 (0.4.0) was tested in Logic on 7 November 2026: everything worked as expected and as described, and it is finished.
+**Status: version 0.6.0 (milestones 6 and 7 merged: Branch, Path, Mutate, Micro Mutate, Reseed, Unmutate and the TREE letters). Tested in Logic on 7 November 2026: Bryn reported "all looks good", and it is finished.** Milestone 5 (0.5.0) was tested in Logic on 7 November 2026: Bryn reported "all good", and it is finished. Milestone 4 (0.4.0) was tested in Logic on 7 November 2026: everything worked as expected and as described, and it is finished.
 **The pattern now grows.** After the trunk, up to 7 branches play (each made from the one before by Reverse, Inverse, Transpose, Mutate or Randomize), Path picks one of up to 128 paths, the Mutate and Micro Mutate knobs change the steps as they play, the seven Reseed buttons throw new dice, and Unmutate takes the pattern back to your last edit. Performance mode (milestone 8) and the settings page are still to come.
 
 ## First five minutes (after installing, see *Getting the plugin*)
@@ -67,7 +67,7 @@ The step editor (tabs, Mod Out chips, page chips, an overview of all 64 steps, e
 
 ## What has been checked
 
-- Version 0.6.0 automatic checks: engine 166,852; clock 1,002,437; window and plugin test 333 (branches and Path in the playing plugin, Mutate saved into the steps, Micro Mutate, every Reseed button and both scopes, Unmutate after each of them and after Rotate / Transpose / Resize, what sets the Unmutate point, saving and loading, TREE letters). With BRANCH 0 and the Mutate knobs at 0 the note and CC stream is identical to 0.5.0 (compared byte for byte). The GitHub run result is in the CHANGELOG. Not yet tested in Logic.
+- Version 0.6.0 automatic checks: engine 166,852; clock 1,002,437; window and plugin test 333 (branches and Path in the playing plugin, Mutate saved into the steps, Micro Mutate, every Reseed button and both scopes, Unmutate after each of them and after Rotate / Transpose / Resize, what sets the Unmutate point, saving and loading, TREE letters). With BRANCH 0 and the Mutate knobs at 0 the note and CC stream is identical to 0.5.0 (compared byte for byte). The GitHub run result is in the CHANGELOG. Tested in Logic on 7 November 2026: all good (reported without a per-item list).
 
 - Version 0.5.0 automatic checks: engine 2,111; clock 1,002,337 (ties, every ratchet amount at several block sizes, CC 84 and CC 1 values and order, all four Mod modes, the 100 a second cap, identical output for block sizes 1 to 8192, stop / start). The GitHub run result is in the CHANGELOG. Tested in Logic on 7 November 2026: all good (reported as "all good" without a per-item list).
 - Earlier (0.4.0): engine self-test: 1,214 checks (control table, menus, the 28 scales and pitch, step data save / load, reading old 0.2.0 / 0.3.0 data, rotate, transpose, all eleven orders: shapes, repeat, determinism and seeds).
