@@ -8,6 +8,7 @@
 #pragma once
 
 #include <fg/Params.h>
+#include <fg/Pitch.h>
 
 #include <array>
 #include <cstddef>
@@ -16,8 +17,9 @@
 
 namespace fg
 {
-    inline constexpr int kNoteMin = 48;        // five octaves, C2 ...
-    inline constexpr int kNoteMax = 108;       // ... to C7 (Logic naming: 60 = C3)
+    // A step's note is a place in the scale, not a MIDI note (see fg/Pitch.h): octave * 12 + degree, 0 to 59.
+    inline constexpr int kNoteMin = 0;
+    inline constexpr int kNoteMax = kStoredNoteMax;
     inline constexpr int kGateMax = 100;       // percent of the step
     inline constexpr int kSlewMax = 100;       // percent
     inline constexpr int kRatchetMax = 8;      // 1 = no ratchet
@@ -30,7 +32,7 @@ namespace fg
 
     struct Step
     {
-        std::uint8_t note = 60;
+        std::uint8_t note = 12;          // octave 1, degree 0: the key note at MIDI 60 (C3 in Logic) for Key C, Root 0
         std::uint8_t gate = 50;
         std::uint8_t slew = 0;
         std::uint8_t ratchet = 1;
@@ -50,10 +52,22 @@ namespace fg
         // The sample pattern the editor shows in milestone 2 (the pattern of pictures A and B for steps 1 to 24, then varied steps).
         static StepData makeSample();
 
-        // Saved form: [version][count][count x 8 bytes]. fromBytes returns false (and changes nothing) for anything it does not understand.
+        // Saved form: [version][count][count x 8 bytes]. Version 2 (0.4.0) stores each note as octave * 12 + degree; version 1 (0.2.0 and
+        // 0.3.0) stored plain MIDI notes, which are converted to the nearest degree of C major when loaded. fromBytes returns false (and
+        // changes nothing) for anything it does not understand.
         std::vector<std::uint8_t> toBytes() const;
         bool fromBytes (const std::uint8_t* data, std::size_t size);
 
         bool operator== (const StepData&) const;
     };
+
+    // ---- editing the trunk (the ROTATE and TRANSPOSE buttons). Both change the step data for good, and only the first `length` steps. ----
+
+    // direction +1 (RIGHT): the start point moves one step forward, so step 2's data becomes step 1 and step 1's goes to the end.
+    // direction -1 (LEFT): the other way. Whole steps move (note, on/off, gate, slew, ratchet, mod).
+    void rotateSteps (StepData&, int length, int direction);
+
+    // Moves every note of the first `length` steps by a number of scale steps (+1 up, -1 down) in the given scale. A note that would go
+    // past either end of the 5-octave range stops at the end.
+    void transposeSteps (StepData&, int length, int scaleSteps, int scale);
 }

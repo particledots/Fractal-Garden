@@ -4,7 +4,9 @@
 //   3. checks saving and reloading (controls, step data, tab, page, window choice), the momentary buttons popping back,
 //      the Knob Mode titles and colours, the Order slot (REPEAT ENDS / CHANCE...), and the Chance mix pop-over;
 //   4. checks that the plugin adds no MIDI while Logic is stopped, and (milestone 3) that the sequencer follows a simulated Logic
-//      transport: notes, stop, relocate, bypass, the temporary test note, RATE / RATIO / LENGTH, two instances, the header read-outs.
+//      transport: notes, stop, relocate, bypass, RATE / RATIO / LENGTH, two instances, the header read-outs;
+//   5. (milestone 4) Scale, Key, Root and Order in the playing plugin, the ROTATE, TRANSPOSE and RESET buttons, page and step editing,
+//      and that loading a project does not press any button.
 // Usage: FractalGardenPreview <folder for the pictures>
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -290,7 +292,7 @@ int main (int argc, char** argv)
         setParam (proc, fg::id::scale, 9);
         proc.setEditorTab (3);
         proc.setEditorPage (4);
-        auto st = proc.getSteps().steps[5]; st.on = ! st.on; st.note = 99; proc.setStep (5, st);
+        auto st = proc.getSteps().steps[5]; st.on = ! st.on; st.note = 30; proc.setStep (5, st);
         auto expected = proc.getSteps();
         auto* toPlain = findButton (*editor.getStyledPanel(), "PLAIN SLIDERS");
         expect (toPlain != nullptr, "PLAIN SLIDERS button exists");
@@ -345,6 +347,7 @@ int main (int argc, char** argv)
             }
         };
         struct Ev { long long t; bool on; int note; int channel; int velocity; bool panic; };
+        auto pitch = [] (int stored) { return fg::pitchFor (stored, 0, 0, 0); };          // the default Scale (Major), Key (C) and Root (0)
 
         const double sr = 48000.0, pps = 120.0 / 60.0 / sr;      // 120 bpm: 24000 samples per quarter note
 
@@ -397,7 +400,7 @@ int main (int argc, char** argv)
             const auto ev = run (*p, host, clock, 48000, 500, 0.0);                 // 8 steps (one pass of the default length 8; 96 blocks of 500, so the run ends exactly there)
             std::vector<Ev> ons;
             for (const auto& e : ev) if (e.on) ons.push_back (e);
-            expect (! ev.empty() && ev[0].on && ev[0].t == 0 && ev[0].note == data.steps[0].note && ev[0].channel == 1 && ev[0].velocity == 100,
+            expect (! ev.empty() && ev[0].on && ev[0].t == 0 && ev[0].note == pitch (data.steps[0].note) && ev[0].channel == 1 && ev[0].velocity == 100,
                     "plays step 1 at once, channel 1, velocity 100");
             int expectedOns = 0; bool timesOk = true, notesOk = true;
             for (int i = 0; i < 8; ++i)
@@ -405,7 +408,7 @@ int main (int argc, char** argv)
                 {
                     if ((std::size_t) expectedOns >= ons.size()) { timesOk = false; break; }
                     timesOk = timesOk && std::llabs (ons[(std::size_t) expectedOns].t - 6000LL * i) <= 1;
-                    notesOk = notesOk && ons[(std::size_t) expectedOns].note == data.steps[(std::size_t) i].note;
+                    notesOk = notesOk && ons[(std::size_t) expectedOns].note == pitch (data.steps[(std::size_t) i].note);
                     ++expectedOns;
                 }
             expect ((int) ons.size() == expectedOns && timesOk && notesOk, "every ON step of the first 8 plays at its 1/16 position with its own note");
@@ -447,7 +450,7 @@ int main (int argc, char** argv)
             // starting again from bar 3 beat 1 plays step 1 at once; every note is the step for that position
             long long c2 = clock;
             ev = run (*p, host, c2, 12000, 512, 8.0);
-            expect (! ev.empty() && ev[0].on && ev[0].t == clock && ev[0].note == dataNow.steps[0].note, "starting at the top of bar 3 plays step 1 at once");
+            expect (! ev.empty() && ev[0].on && ev[0].t == clock && ev[0].note == pitch (dataNow.steps[0].note), "starting at the top of bar 3 plays step 1 at once");
         }
 
         // -- a jump (relocate or Logic's cycle) ends the note and carries on from the new position --
@@ -491,31 +494,27 @@ int main (int argc, char** argv)
             int onsAfter = 0, offsAfter = 0;
             for (const auto& e : ev) { if (e.on) ++onsAfter; else ++offsAfter; }
             expect (onsAfter == 0 && offsAfter == 1 && ! p2->getPlayerView().running, "playing without a song position is treated like a stop");
-            expect (p2->getDiagnostics().noPositionBlocks == 4, "...and is counted in the diagnostics line");
         }
 
-        // -- the temporary test note: only while Logic is stopped, and only when asked just now --
+        // -- the milestone 3 test aids are gone: the header shows only the song position, and a stopped Logic gets no MIDI at all --
         {
             MockHost host;
             auto p = makeProc (host);
             long long clock = 0;
-            p->requestTestNote();
-            auto ev = run (*p, host, clock, 16384, 512, 0.0, false);
-            int ons = 0, offs = 0; long long onAt = -1, offAt = -1;
-            for (const auto& e : ev) { if (e.on) { ++ons; onAt = e.t; expect (e.note == 72 && e.channel == 1, "the test note is C4 (72) on channel 1"); } else { ++offs; offAt = e.t; } }
-            expect (ons == 1 && offs == 1 && onAt == 0 && std::llabs (offAt - 12000) <= 512, "the test note sounds once while stopped, for about a quarter of a second");
-            expect (p->getDiagnostics().testNotesSent == 1 && p->getDiagnostics().testRequests == 1, "the test note is counted");
-
-            p->requestTestNote();                                                    // while Logic plays: nothing
-            ev = run (*p, host, clock, 2048, 512, 0.0, true);
-            bool anyTest = false;
-            for (const auto& e : ev) if (e.note == 72) anyTest = true;
-            expect (! anyTest && p->getDiagnostics().testNotesSent == 1, "a test note asked for while Logic plays does not sound");
-
-            p->requestTestNote();                                                    // a request that nobody picked up is not played seconds later
-            juce::Thread::sleep (1700);
-            ev = run (*p, host, clock, 2048, 512, 0.0, false);
-            expect (ev.empty() && p->getDiagnostics().testNotesSent == 1, "an old test request is dropped, not played late");
+            run (*p, host, clock, 4096, 512, 0.0);
+            FractalGardenEditor editor (*p);
+            editor.setSize (1080, 720);
+            auto* panel = editor.getStyledPanel();
+            panel->refreshNow();
+            const auto caption = panel->headerCaption();
+            expect (caption.startsWith ("BAR ") && ! caption.containsIgnoreCase ("TEST") && ! caption.containsIgnoreCase ("STOPPED BLOCKS")
+                    && ! caption.containsIgnoreCase ("NO POSITION"), "the header caption is the song position only: " + caption);
+            const auto ev = run (*p, host, clock, 16384, 512, 0.0, false);
+            int notes = 0;
+            for (const auto& e : ev) if (! e.panic) ++notes;
+            expect (notes <= 1, "while Logic is stopped the plugin sends at most the note-off of a note that was sounding");
+            const auto ev2 = run (*p, host, clock, 16384, 512, 0.0, false);
+            expect (ev2.empty(), "nothing at all while Logic stays stopped");
         }
 
         // -- RATE, RATIO, LENGTH, edited steps and tempo take effect --
@@ -526,7 +525,7 @@ int main (int argc, char** argv)
             setParam (*p, fg::id::ratio, 5.0f);                                      // x2 -> a step is a 1/16 again
             setParam (*p, fg::id::length, 3.0f);
             fg::Step s = p->getSteps().steps[2];
-            s.on = true; s.note = 55; s.gate = 100;
+            s.on = true; s.note = 26; s.gate = 100;
             p->setStep (2, s);
             long long clock = 0;
             const auto ev = run (*p, host, clock, 36000, 512, 0.0);
@@ -536,7 +535,7 @@ int main (int argc, char** argv)
             for (std::size_t i = 0; i < ons.size(); ++i) spaced = spaced && std::llabs (ons[i].t - 6000LL * (long long) i) <= 1;
             expect (spaced, "RATE 1/8 with RATIO x2 plays a step every 1/16");
             const auto data = p->getSteps();
-            expect (ons.size() >= 4 && ons[2].note == 55 && ons[0].note == data.steps[0].note && ons[3].note == data.steps[0].note, "LENGTH 3 loops after step 3, and an edited step is played");
+            expect (ons.size() >= 4 && ons[2].note == pitch (26) && ons[0].note == pitch (data.steps[0].note) && ons[3].note == pitch (data.steps[0].note), "LENGTH 3 loops after step 3, and an edited step is played");
 
             MockHost hostFast;
             hostFast.bpm = 240.0;
@@ -585,6 +584,230 @@ int main (int argc, char** argv)
         }
     }
 
+    // ---- milestone 4: Scale, Key, Root, Order and the buttons in the playing plugin ----
+    {
+        struct MockHost : juce::AudioPlayHead
+        {
+            bool playing = true; double ppq = 0.0, bpm = 120.0;
+            juce::Optional<PositionInfo> getPosition() const override
+            {
+                PositionInfo pi; pi.setIsPlaying (playing); pi.setBpm (bpm); pi.setPpqPosition (ppq);
+                pi.setTimeSignature (juce::AudioPlayHead::TimeSignature { 4, 4 });
+                return pi;
+            }
+        };
+        const double sr = 48000.0, pps = 120.0 / 60.0 / sr;
+        struct Note { long long t; int note; };
+        auto pitch = [] (int stored) { return fg::pitchFor (stored, 0, 0, 0); };
+
+        auto makeProc = [&] (MockHost& host)
+        {
+            auto p = std::make_unique<FractalGardenProcessor>();
+            p->setPlayConfigDetails (0, 0, sr, 512);
+            p->prepareToPlay (sr, 512);
+            p->setPlayHead (&host);
+            for (int i = 0; i < 8; ++i)                                  // eight steps, all on, each with its own place in the scale
+            {
+                fg::Step s = p->getSteps().steps[(std::size_t) i];
+                s.on = true; s.gate = 50; s.note = (std::uint8_t) (12 + i % 7);
+                p->setStep (i, s);
+            }
+            return p;
+        };
+        // runs blocks from song position startPpq (continuous) and returns the note-ons
+        auto runNotes = [&] (FractalGardenProcessor& p, MockHost& host, long long total, double startPpq)
+        {
+            std::vector<Note> out;
+            juce::AudioBuffer<float> audio (0, 512);
+            for (long long t = 0; t < total; t += 512)
+            {
+                host.playing = true;
+                host.ppq = startPpq + (double) t * pps;
+                juce::MidiBuffer midi;
+                p.processBlock (audio, midi);
+                for (auto meta : midi)
+                    if (meta.getMessage().isNoteOn() && t + meta.samplePosition < total) out.push_back ({ t + meta.samplePosition, meta.getMessage().getNoteNumber() });
+            }
+            return out;
+        };
+
+        {   // Scale, Key and Root change the notes that play, not the steps
+            MockHost host;
+            auto p = makeProc (host);
+            const auto before = p->getSteps();
+            setParam (*p, fg::id::scale, 5); setParam (*p, fg::id::key, 9); setParam (*p, fg::id::root, 2);
+            const auto notes = runNotes (*p, host, 8 * 6000, 0.0);
+            bool ok = notes.size() == 8;
+            for (std::size_t i = 0; i < notes.size() && ok; ++i)
+                ok = notes[i].note == fg::pitchFor (before.steps[i].note, 5, 9, 2);
+            expect (ok, "SCALE, KEY and ROOT set the pitch of every note");
+            expect (p->getSteps() == before, "...and do not change the stored steps");
+            setParam (*p, fg::id::scale, 16); setParam (*p, fg::id::key, 0); setParam (*p, fg::id::root, 0);
+            const auto pent = runNotes (*p, host, 8 * 6000, 0.0);
+            bool pentOk = pent.size() == 8;
+            for (std::size_t i = 0; i < pent.size() && pentOk; ++i) pentOk = pent[i].note == fg::pitchFor (before.steps[i].note, 16, 0, 0);
+            expect (pentOk && p->getSteps() == before, "switching to Major Pentatonic re-pitches and keeps the steps");
+        }
+        {   // ORDER
+            MockHost host;
+            auto p = makeProc (host);
+            setParam (*p, fg::id::order, 1);                                   // Reverse
+            auto notes = runNotes (*p, host, 8 * 6000, 0.0);
+            bool rev = notes.size() == 8;
+            for (std::size_t i = 0; i < notes.size() && rev; ++i) rev = notes[i].note == fg::pitchFor (p->getSteps().steps[7 - i].note, 0, 0, 0);
+            expect (rev, "ORDER Reverse plays the steps backwards");
+            setParam (*p, fg::id::order, 4);                                   // Converge
+            notes = runNotes (*p, host, 8 * 6000, 0.0);
+            static const int converge[8] = { 0, 7, 1, 6, 2, 5, 3, 4 };
+            bool conv = notes.size() == 8;
+            for (std::size_t i = 0; i < notes.size() && conv; ++i) conv = notes[i].note == fg::pitchFor (p->getSteps().steps[(std::size_t) converge[i]].note, 0, 0, 0);
+            expect (conv, "ORDER Converge plays 1 8 2 7 3 6 4 5");
+            setParam (*p, fg::id::order, 2); setParam (*p, fg::id::pendRepeat, 1);   // Pendulum with the ends repeated
+            notes = runNotes (*p, host, 16 * 6000, 0.0);
+            static const int pend[16] = { 0, 1, 2, 3, 4, 5, 6, 7, 7, 6, 5, 4, 3, 2, 1, 0 };
+            bool pnd = notes.size() == 16;
+            for (std::size_t i = 0; i < notes.size() && pnd; ++i) pnd = notes[i].note == fg::pitchFor (p->getSteps().steps[(std::size_t) pend[i]].note, 0, 0, 0);
+            expect (pnd, "ORDER Pendulum with REPEAT ENDS plays 1-8 then 8-1");
+            setParam (*p, fg::id::order, 10);                                  // Chance mix: runs, deterministic
+            const auto m1 = runNotes (*p, host, 40 * 6000, 0.0), m2 = runNotes (*p, host, 40 * 6000, 0.0);
+            bool same = m1.size() == m2.size() && ! m1.empty();
+            for (std::size_t i = 0; i < m1.size() && same; ++i) same = m1[i].note == m2[i].note && m1[i].t == m2[i].t;
+            expect (same, "Chance mix plays the same way when the same bars are played again");
+        }
+        {   // ROTATE
+            MockHost host;
+            auto p = makeProc (host);
+            auto before = p->getSteps();
+            for (int i = 0; i < 8; ++i) { auto s = before.steps[(std::size_t) i]; s.gate = (std::uint8_t) (10 + i); p->setStep (i, s); }
+            before = p->getSteps();
+            setParam (*p, fg::id::rotateRight, 1);
+            letWindowThreadRun (150);
+            auto now = p->getSteps();
+            expect (now.steps[0].gate == before.steps[1].gate && now.steps[7].gate == before.steps[0].gate && now.steps[8] == before.steps[8], "ROTATE RIGHT moves the start point one step on (step 2 becomes step 1) within LENGTH");
+            letWindowThreadRun (300);
+            expect (getParam (*p, fg::id::rotateRight) < 0.5f && p->getSteps() == now, "ROTATE RIGHT pops back and acted once");
+            setParam (*p, fg::id::rotateLeft, 1);
+            letWindowThreadRun (150);
+            expect (p->getSteps() == before, "ROTATE LEFT undoes it");
+            letWindowThreadRun (300);
+            // the rotated pattern is what plays
+            setParam (*p, fg::id::rotateRight, 1);
+            letWindowThreadRun (150);
+            const auto notes = runNotes (*p, host, 6000, 0.0);
+            expect (! notes.empty() && notes[0].note == pitch (p->getSteps().steps[0].note) && p->getSteps().steps[0].note == before.steps[1].note, "the rotated pattern is what plays");
+            letWindowThreadRun (300);
+        }
+        {   // TRANSPOSE
+            MockHost host;
+            auto p = makeProc (host);
+            const auto before = p->getSteps();
+            setParam (*p, fg::id::transposeUp, 1);
+            letWindowThreadRun (150);
+            bool up = true;
+            for (int i = 0; i < 8; ++i) up = up && p->getSteps().steps[(std::size_t) i].note == fg::degreeToStored (fg::storedToDegree (before.steps[(std::size_t) i].note, 0) + 1, 0);
+            expect (up && p->getSteps().steps[8] == before.steps[8], "TRANSPOSE UP moves the first LENGTH steps up one scale step");
+            letWindowThreadRun (300);
+            setParam (*p, fg::id::transposeDown, 1);
+            letWindowThreadRun (150);
+            expect (p->getSteps() == before, "TRANSPOSE DOWN moves them back");
+            letWindowThreadRun (300);
+            setParam (*p, fg::id::scale, 16);                                  // in Major Pentatonic a step is a pentatonic step
+            setParam (*p, fg::id::transposeUp, 1);
+            letWindowThreadRun (150);
+            bool pent = true;
+            for (int i = 0; i < 8; ++i) pent = pent && p->getSteps().steps[(std::size_t) i].note == fg::degreeToStored (fg::storedToDegree (before.steps[(std::size_t) i].note, 16) + 1, 16);
+            expect (pent, "TRANSPOSE counts steps of the chosen scale");
+            letWindowThreadRun (300);
+        }
+        {   // RESET restarts the order at the next step
+            MockHost host;
+            auto p = makeProc (host);
+            const auto data = p->getSteps();
+            auto notes = runNotes (*p, host, 20000, 0.0);                       // steps 1 to 4 (boundaries 0, 6000, 12000, 18000)
+            expect (notes.size() == 4, "four steps play before RESET");
+            setParam (*p, fg::id::reset, 1);
+            setParam (*p, fg::id::reset, 0);
+            juce::AudioBuffer<float> audio (0, 512);
+            std::vector<Note> after;
+            for (long long t = 20000; t < 20000 + 7 * 6000; t += 512)
+            {
+                host.ppq = (double) t * pps;
+                juce::MidiBuffer midi;
+                p->processBlock (audio, midi);
+                for (auto meta : midi) if (meta.getMessage().isNoteOn()) after.push_back ({ t + meta.samplePosition, meta.getMessage().getNoteNumber() });
+            }
+            bool restarted = after.size() >= 6;
+            for (std::size_t i = 0; i < after.size() && i < 6 && restarted; ++i) restarted = after[i].note == pitch (data.steps[i % 8].note);
+            expect (restarted, "RESET: the next step played is step 1 and the pattern goes on from there");
+        }
+        {   // loading a project is not a press of any button; a button that was on in the saved project does nothing
+            MockHost host;
+            auto p = makeProc (host);
+            setParam (*p, fg::id::rotateRight, 1);
+            setParam (*p, fg::id::transposeUp, 1);
+            juce::MemoryBlock saved;
+            p->getStateInformation (saved);
+            FractalGardenProcessor p2;
+            p2.setPlayConfigDetails (0, 0, sr, 512);
+            p2.setStateInformation (saved.getData(), (int) saved.getSize());
+            const auto loaded = p2.getSteps();
+            letWindowThreadRun (300);
+            expect (p2.getSteps() == loaded, "buttons that were on when a project was saved do not act when it is loaded");
+            expect (getParam (p2, fg::id::rotateRight) < 0.5f && getParam (p2, fg::id::transposeUp) < 0.5f, "...and are off");
+            letWindowThreadRun (300);
+        }
+        {   // the seed of the random orders is saved with the project, and a project from before 0.4.0 gets one
+            MockHost host;
+            auto p = makeProc (host);
+            juce::MemoryBlock saved;
+            p->getStateInformation (saved);
+            FractalGardenProcessor p2;
+            p2.setPlayConfigDetails (0, 0, sr, 512);
+            p2.setStateInformation (saved.getData(), (int) saved.getSize());
+            expect (p2.getValueTreeState().state.getProperty (FgParams::kSeedProperty).toString()
+                        == p->getValueTreeState().state.getProperty (FgParams::kSeedProperty).toString(), "the order seed survives saving and loading");
+            auto xml = juce::parseXML ("<Parameters/>");
+            juce::MemoryBlock old;
+            juce::AudioProcessor::copyXmlToBinary (*xml, old);
+            FractalGardenProcessor p3;
+            p3.setStateInformation (old.getData(), (int) old.getSize());
+            expect (p3.getValueTreeState().state.hasProperty (FgParams::kSeedProperty), "a project without a seed gets one");
+        }
+        {   // the editor's page follows LENGTH; pages beyond it cannot be chosen
+            FractalGardenProcessor p;
+            p.setPlayConfigDetails (0, 0, sr, 512);
+            FractalGardenEditor editor (p);
+            editor.setSize (1080, 720);
+            auto& se = editor.getStyledPanel()->getStepEditor();
+            setParam (p, fg::id::length, 20);
+            se.selectPage (5);
+            expect (se.page() == 2, "a page beyond LENGTH cannot be chosen (LENGTH 20 has three pages)");
+            se.selectPage (1);
+            setParam (p, fg::id::length, 8);
+            letWindowThreadRun (150);
+            expect (se.page() == 0, "when LENGTH shrinks, the page follows it down");
+        }
+        {   // step editing: a note moves by scale steps
+            FractalGardenProcessor p;
+            p.setPlayConfigDetails (0, 0, sr, 512);
+            FractalGardenEditor editor (p);
+            editor.setSize (1080, 720);
+            auto& se = editor.getStyledPanel()->getStepEditor();
+            se.selectTab (0);
+            se.setValue (0, 0, 0.0f);   expect (p.getSteps().steps[0].note == 0, "the bottom of the note box is the lowest note");
+            se.setValue (0, 0, 1.0f);   expect (p.getSteps().steps[0].note == fg::degreeToStored (fg::degreeCount (0) - 1, 0), "the top is the highest degree of C major");
+            setParam (p, fg::id::scale, 17);                                   // Minor Pentatonic: five notes an octave
+            se.setValue (1, 0, 1.0f);   expect (p.getSteps().steps[1].note == 4 * 12 + 4, "in a five-note scale the top is octave 5, degree 5");
+            se.setValue (1, 0, 0.5f);   expect (p.getSteps().steps[1].note == fg::degreeToStored (12, 17), "the middle of the box is the middle degree");
+            se.setValue (2, 1, 0.8f);   expect (p.getSteps().steps[2].gate == 80, "the gate tab still sets a percentage");
+            se.resetValue (2, 1);       expect (p.getSteps().steps[2].gate == fg::Step().gate, "a double click puts the gate back to its default");
+            se.resetValue (1, 0);       expect (p.getSteps().steps[1].note == fg::Step().note, "...and the note back to its default");
+            setParam (p, fg::id::length, 4);
+            const auto beyond = p.getSteps().steps[6];
+            se.setValue (6, 0, 1.0f);   expect (p.getSteps().steps[6] == beyond, "steps beyond LENGTH cannot be edited");
+        }
+    }
+
     // ---- the step editor ----
     {
         FractalGardenProcessor p;
@@ -593,6 +816,7 @@ int main (int argc, char** argv)
         editor.setSize (1080, 720);
         auto& se = editor.getStyledPanel()->getStepEditor();
         for (int t = 0; t < 5; ++t) { se.selectTab (t); expect (se.tab() == t && p.getEditorTab() == t, "tab " + juce::String (t)); }
+        setParam (p, fg::id::length, 64);
         for (int pg = 0; pg < 8; ++pg) { se.selectPage (pg); expect (se.page() == pg && p.getEditorPage() == pg, "page " + juce::String (pg)); }
         const bool before = p.getSteps().steps[0].on;
         se.toggleStep (0);

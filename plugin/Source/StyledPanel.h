@@ -88,8 +88,9 @@ private:
 
 //==============================================================================
 // The step editor: five tabs, the Mod Out chips' label, eight page chips, the overview strip of all 64 steps and eight step columns.
-// It paints itself and handles clicks and drags. In milestone 2 a click on a step's ON / OFF button and a drag in a step's box change
-// the sample data, so that saving the step data can be tested; the real editing arrives with milestones 4 and 5.
+// It paints itself and handles clicks and drags. A click on a step's ON / OFF button switches the step; a click or drag in a step's box
+// sets that step's value for the current tab (milestone 4: a note moves by scale steps, and the read-out is the note name as it
+// will sound); a double click puts the value back to its default. Pages beyond LENGTH cannot be chosen.
 class StepEditor : public juce::Component
 {
 public:
@@ -100,6 +101,7 @@ public:
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
     void refresh();                                  // repaints when the steps, tab, page, length or Mod Out mode changed
     void setPlayhead (int step) { if (step != playhead) { playhead = step; repaint(); } }      // the step Logic's playback is on, -1 = none (stopped)
@@ -110,16 +112,23 @@ public:
     void selectTab (int);
     void selectPage (int);
     void toggleStep (int stepIndex);
+    void setValue (int stepIndex, int tabIndex, float fraction);      // what a click or drag in the box does: 0 = bottom, 1 = top
+    void resetValue (int stepIndex, int tabIndex);                    // what a double click does: the value goes back to its default
 
 private:
     int length() const;
     int modMode() const;
+    int scaleIndex() const;
+    int keyIndex() const;
+    int rootValue() const;
+    int activePages() const;                          // pages that LENGTH reaches
+    int stepUnder (juce::Point<int> panelPoint) const;       // the step whose value box is under this point (panel coordinates), or -1
     void dragValue (int stepIndex, int tabIndex, float mouseY);
     double overviewFraction (const fg::Step&, int tabIndex) const;
 
     FractalGardenProcessor& proc;
     int playhead = -1;
-    int lastRevision = -1, lastTab = -1, lastPage = -1, lastLength = -1, lastModMode = -1;
+    int lastRevision = -1, lastTab = -1, lastPage = -1, lastLength = -1, lastModMode = -1, lastScale = -1, lastKey = -1, lastRoot = -999;
     int dragStep = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StepEditor)
@@ -161,7 +170,6 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
-    void mouseDown (const juce::MouseEvent&) override;       // a click on the STEP lamp asks for the temporary test note
 
     // Called when the "Plain sliders" button is pressed; the editor swaps windows.
     std::function<void()> onSwitchToPlain;
@@ -179,7 +187,7 @@ public:
     bool chanceButtonShown() const { return chanceButton.isVisible(); }
     juce::String headerLine1() const;
     juce::String headerLine2() const;
-    juce::String headerCaption() const;                      // song position and the temporary test counters, under the header
+    juce::String headerCaption() const;                      // Logic's song position (bar and beat), under the header
     bool stepLampLit() const { return previewLights || stepLit; }
     bool gateLampLit() const { return previewLights || gateLit; }
     void setPreviewHeader (const juce::String& line1, const juce::String& line2, bool lightsOn);   // pictures only: fixed header text and lit lights

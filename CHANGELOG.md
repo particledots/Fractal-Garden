@@ -3,6 +3,18 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
+Version 0.4.0 (milestone 4, trunk editing and the pitch controls; built and checked without Logic, **not yet tested in Logic**).
+
+- Removed the milestone 3 test aids: the clickable STEP lamp, the test note and the diagnostic counters (milestone 3 result recorded: Logic does not call a MIDI effect while stopped).
+- New `fg/Pitch.h` / `Pitch.cpp`: the 28 scales (the Dotriaconta-tone table, same order). A step stores octave x 12 + degree (0 to 59); the played MIDI note is 48 + KEY + 12 x octave + scale interval (after ROOT), clamped 0 to 127. SCALE and KEY apply as each note plays, so stored steps never change with them.
+- Step data format version 2; versions 1 (MIDI notes, from 0.2.0 / 0.3.0) are converted to the nearest degree of C major when loaded. Default step note and the sample pattern now use degrees.
+- New `fg/Orders.h` / `Orders.cpp`: 11 orders as pure functions of the step counter (so they stay locked to Logic and block-size independent): Forward, Reverse, Pendulum (+ REPEAT ENDS), Random, Converge, Diverge, Converge & Diverge, Page Jump, Drunk walk, Random no-repeat, Chance mix. The last three, Pendulum with repeated ends, Random and the hashing are carried over from Dotriaconta-tone. Random orders use a seed made per instance and saved with the project (property "orderSeed").
+- LENGTH, SCALE, KEY, ORDER, REPEAT ENDS, CHANCE... , ROOT, RESET, ROTATE LEFT / RIGHT and TRANSPOSE DOWN / UP act. ROTATE and TRANSPOSE change the stored steps inside LENGTH (RIGHT: step 2 becomes step 1; TRANSPOSE counts steps of the current scale, stopping at the ends of the 5 octaves). RESET: the next step is step 1 until Logic stops, jumps or cycles. Momentary buttons are counted when pressed on any thread and acted on once; loading a project is not a press.
+- Editor: Note box moves by scale degrees with a note-name read-out; double-click puts a step's value back to default; page chips beyond LENGTH are greyed and unclickable; the page follows LENGTH when it shrinks; steps beyond LENGTH cannot be edited.
+- Manual gaps and approximations: Converge / Diverge / Converge & Diverge shapes (1 8 2 7 3 6 4 5, its reverse, alternating); Page Jump (pages of eight, random page per visit); the manual's "Random" matches our Random no-repeat; ROOT clamp to MIDI 0 to 127; ROTATE meaning; RESET timing.
+- No new controls; all 46 ids unchanged.
+- Checks: engine 1,214; clock 575,208; window and plugin test 246.
+
 Version 0.3.0 (milestone 3, the Logic proving ground; **tested in Logic on both Macs on 7 November 2026: every check passed**). The trunk plays, locked to Logic.
 
 - New engine file `fg/Clock.h` / `Clock.cpp`: `TrunkPlayer` turns Logic's song position (quarter notes at the start of each block), tempo, time signature, RATE, RATIO and LENGTH into note starts and stops with sample positions. Step number = position / step length, modulo LENGTH, so the pattern is locked to Logic's bars and two instances agree without talking to each other.

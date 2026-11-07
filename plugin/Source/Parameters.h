@@ -19,4 +19,5 @@ namespace FgParams
     inline constexpr const char* kTabProperty   = "editorTab";     // 0 Note, 1 Gate Length, 2 Slew, 3 Ratchet, 4 Mod
     inline constexpr const char* kPageProperty  = "editorPage";    // 0 to 7
     inline constexpr const char* kViewProperty  = "editorView";    // "styled" or "plain"
+    inline constexpr const char* kSeedProperty  = "orderSeed";     // seed of the random orders, chosen when an instance is first made
 }

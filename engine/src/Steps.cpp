@@ -7,7 +7,7 @@ namespace fg
 
 namespace
 {
-    constexpr std::uint8_t kFormatVersion = 1;
+    constexpr std::uint8_t kFormatVersion = 2;       // 2: notes are octave * 12 + degree; 1 (0.2.0, 0.3.0): MIDI notes
     constexpr std::size_t kBytesPerStep = 8;
 
     std::uint8_t clampTo (int v, int lo, int hi) { return (std::uint8_t) std::min (hi, std::max (lo, v)); }
@@ -40,7 +40,8 @@ bool StepData::operator== (const StepData& o) const
 
 StepData StepData::makeSample()
 {
-    // Picture A: steps 1 to 16 (Dorian on D), step 6 and step 12 off.
+    // Picture A: steps 1 to 16 (the notes of D Dorian, which are the notes of C major), step 6 and step 12 off. The notes below are MIDI
+    // notes; each is turned into the nearest degree of C major, which is exact for these.
     static const int notesA[16] = { 74, 81, 86, 79, 76, 91, 98, 84, 74, 76, 81, 86, 93, 98, 100, 79 };
     static const int onA[16]    = { 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1 };
     // Picture B: steps 17 to 24, the Mod tab in Shapes mode; step 22 off.
@@ -52,8 +53,8 @@ StepData StepData::makeSample()
     for (int i = 0; i < kNumSteps; ++i)
     {
         Step s;
-        if (i < 16)       { s.note = (std::uint8_t) notesA[i]; s.on = onA[i] != 0; }
-        else              { s.note = (std::uint8_t) (60 + (i * 5) % 24); s.on = (i % 7) != 3; }
+        if (i < 16)       { s.note = (std::uint8_t) nearestMajorStored (notesA[i]); s.on = onA[i] != 0; }
+        else              { s.note = (std::uint8_t) nearestMajorStored (60 + (i * 5) % 24); s.on = (i % 7) != 3; }
         s.gate     = (std::uint8_t) (25 + (i * 11) % 76);
         s.slew     = (std::uint8_t) ((i % 3 == 0) ? (i * 13) % 60 : 0);
         s.ratchet  = (std::uint8_t) ((i % 5 == 0) ? 2 : 1);
@@ -94,8 +95,9 @@ std::vector<std::uint8_t> StepData::toBytes() const
 
 bool StepData::fromBytes (const std::uint8_t* data, std::size_t size)
 {
-    if (data == nullptr || size < 2 || data[0] != kFormatVersion)
+    if (data == nullptr || size < 2 || (data[0] != kFormatVersion && data[0] != 1))
         return false;
+    const bool oldMidiNotes = data[0] == 1;
     const std::size_t count = data[1];
     if (count == 0 || count > (std::size_t) kNumSteps || size != 2 + count * kBytesPerStep)
         return false;
@@ -105,13 +107,37 @@ bool StepData::fromBytes (const std::uint8_t* data, std::size_t size)
     {
         const std::uint8_t* p = data + 2 + i * kBytesPerStep;
         Step s;
-        s.note = p[0]; s.gate = p[1]; s.slew = p[2]; s.ratchet = p[3];
+        s.note = oldMidiNotes ? (std::uint8_t) nearestMajorStored (p[0]) : p[0];
+        s.gate = p[1]; s.slew = p[2]; s.ratchet = p[3];
         s.mod = p[4]; s.modShape = p[5]; s.modRate = p[6]; s.on = p[7] != 0;
         s.clamp();
         fresh.steps[i] = s;
     }
     *this = fresh;
     return true;
+}
+
+void rotateSteps (StepData& data, int length, int direction)
+{
+    const int L = std::clamp (length, 1, kNumSteps);
+    if (L < 2 || direction == 0)
+        return;
+    const StepData before = data;
+    for (int i = 0; i < L; ++i)
+    {
+        const int from = direction > 0 ? (i + 1) % L : (i + L - 1) % L;
+        data.steps[(std::size_t) i] = before.steps[(std::size_t) from];
+    }
+}
+
+void transposeSteps (StepData& data, int length, int scaleSteps, int scale)
+{
+    const int L = std::clamp (length, 1, kNumSteps);
+    for (int i = 0; i < L; ++i)
+    {
+        auto& s = data.steps[(std::size_t) i];
+        s.note = (std::uint8_t) degreeToStored (storedToDegree (s.note, scale) + scaleSteps, scale);
+    }
 }
 
 } // namespace fg

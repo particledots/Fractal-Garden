@@ -93,7 +93,11 @@ namespace fg
         "Forward", "Reverse", "Pendulum", "Random", "Converge", "Diverge", "Converge & Diverge", "Page Jump",
         "Drunk walk", "Random no-repeat", "Chance mix" };
     inline constexpr int kNumOrders = (int) (sizeof (kOrderNames) / sizeof (kOrderNames[0]));
-    enum Order { kOrderForward = 0, kOrderPendulum = 2, kOrderChanceMix = 10 };
+    enum Order
+    {
+        kOrderForward = 0, kOrderReverse = 1, kOrderPendulum = 2, kOrderRandom = 3, kOrderConverge = 4, kOrderDiverge = 5,
+        kOrderConvergeDiverge = 6, kOrderPageJump = 7, kOrderDrunk = 8, kOrderRandomNoRepeat = 9, kOrderChanceMix = 10
+    };
 
     inline constexpr const char* kRateNames[] = { "1 bar", "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32" };
     inline constexpr int kNumRates = (int) (sizeof (kRateNames) / sizeof (kRateNames[0]));

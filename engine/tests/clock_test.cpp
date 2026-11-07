@@ -18,6 +18,7 @@ static int checks = 0, failures = 0;
 
 namespace
 {
+    constexpr int kChromatic = fg::kNumScales - 1;
     constexpr double kSr = 48000.0;
     constexpr double kBpm = 120.0;
     constexpr double kPps = kBpm / 60.0 / kSr;       // quarter notes per sample at 120 bpm, 48 kHz (1 quarter = 24000 samples)
@@ -51,7 +52,7 @@ namespace
         fg::StepData d;
         for (int i = 0; i < fg::kNumSteps; ++i)
         {
-            d.steps[(std::size_t) i].note = (std::uint8_t) (36 + i);     // every step has its own note, so a wrong step is seen
+            d.steps[(std::size_t) i].note = (std::uint8_t) std::min (i, fg::kStoredNoteMax);     // every step has its own note (Chromatic, key C: step i plays 48 + i), so a wrong step is seen
             d.steps[(std::size_t) i].gate = (std::uint8_t) gatePercent;
             d.steps[(std::size_t) i].on = true;
         }
@@ -69,9 +70,17 @@ namespace
         };
     }
 
+    // The test steps hold "place i" in each step; in the Chromatic scale with key C and Root 0, place i plays MIDI note 48 + i.
+    fg::PlayerSettings plainSettings()
+    {
+        fg::PlayerSettings s;
+        s.scale = kChromatic;
+        return s;
+    }
+
     std::function<fg::PlayerSettings (long long)> fixedSettings (int rate = fg::kDefaultRate, int ratio = fg::kDefaultRatio, int length = 8)
     {
-        return [=] (long long) { fg::PlayerSettings s; s.rate = rate; s.ratio = ratio; s.length = length; return s; };
+        return [=] (long long) { fg::PlayerSettings s = plainSettings(); s.rate = rate; s.ratio = ratio; s.length = length; return s; };
     }
 
     Run makeRun (long long total)
@@ -164,7 +173,7 @@ namespace
             if (! e.on) continue;
             const double k = std::round (e.ppq / e.stepLen);
             if (std::fabs (e.ppq - k * e.stepLen) > tolerance) return false;
-            if (e.note != 36 + (int) floorMod ((long long) k, e.length)) return false;
+            if (e.note != 48 + (int) floorMod ((long long) k, e.length)) return false;
         }
         return true;
     }
@@ -212,7 +221,7 @@ int main()
         {
             const auto& on = ev[(std::size_t) (2 * k)]; const auto& off = ev[(std::size_t) (2 * k + 1)];
             exact = on.on && ! off.on && std::llabs (on.t - 6000LL * k) <= 1 && std::llabs (off.t - (6000LL * k + 3000)) <= 1
-                    && on.note == 36 + k % 8 && off.note == on.note && on.velocity == fg::kPlayerVelocity;
+                    && on.note == 48 + k % 8 && off.note == on.note && on.velocity == fg::kPlayerVelocity;
         }
         CHECK (exact);
         CHECK (onsOnBoundaries (ev));
@@ -261,7 +270,7 @@ int main()
             for (const auto& e : ev)
                 if (e.on)
                 {
-                    exact = exact && std::llabs (e.t - (long long) std::llround (k * 0.25 / pps)) <= 1 && e.note == 36 + k % 8;
+                    exact = exact && std::llabs (e.t - (long long) std::llround (k * 0.25 / pps)) <= 1 && e.note == 48 + k % 8;
                     ++k;
                 }
             CHECK (exact && k > 10);
@@ -319,8 +328,8 @@ int main()
         // step 1 ends exactly where step 2 would start, with the note-off before any note-on at the same sample
         bool legato = true, restHeard = false;
         for (std::size_t i = 0; i + 1 < ev.size(); ++i)
-            if (ev[i].t == 12000) { legato = legato && ! ev[i].on && ev[i].note == 37; }
-        for (const auto& e : ev) if (e.note == 38) restHeard = true;
+            if (ev[i].t == 12000) { legato = legato && ! ev[i].on && ev[i].note == 49; }
+        for (const auto& e : ev) if (e.note == 50) restHeard = true;
         CHECK (legato && ! restHeard);
         bool offBeforeOn = true;                            // wherever an off and an on share a sample, the off comes first
         for (std::size_t i = 0; i + 1 < ev.size(); ++i)
@@ -343,7 +352,7 @@ int main()
         Run r = makeRun (24000);
         r.host = linearHost (0.1);
         const auto ev = simulate (p, r);
-        CHECK (! ev.empty() && ev[0].on && std::llabs (ev[0].t - 3600) <= 1 && ev[0].note == 36 + 1);      // boundary 0.25 = step index 1
+        CHECK (! ev.empty() && ev[0].on && std::llabs (ev[0].t - 3600) <= 1 && ev[0].note == 48 + 1);      // boundary 0.25 = step index 1
     }
     for (double start : { 8.0, 7.999999999, 8.0000001 })
     {
@@ -351,14 +360,14 @@ int main()
         Run r = makeRun (12000);
         r.host = linearHost (start);
         const auto ev = simulate (p, r);
-        CHECK (! ev.empty() && ev[0].on && ev[0].t <= 1 && ev[0].note == 36 + 32 % 8);
+        CHECK (! ev.empty() && ev[0].on && ev[0].t <= 1 && ev[0].note == 48 + 32 % 8);
     }
     {   // before bar 1 (a count-in): the step index still counts correctly
         fg::TrunkPlayer p;
         Run r = makeRun (24000);
         r.host = linearHost (-1.0);
         const auto ev = simulate (p, r);
-        CHECK (! ev.empty() && ev[0].on && ev[0].t <= 1 && ev[0].note == 36 + (int) floorMod (-4, 8));
+        CHECK (! ev.empty() && ev[0].on && ev[0].t <= 1 && ev[0].note == 48 + (int) floorMod (-4, 8));
         CHECK (onsOnBoundaries (ev));
     }
 
@@ -376,7 +385,7 @@ int main()
         long long firstAfter = -1;
         for (const auto& e : ev)
         {
-            if (! e.on && e.note == 37 && e.t == 7168) offAtStop = true;
+            if (! e.on && e.note == 49 && e.t == 7168) offAtStop = true;
             if (e.t > 7168 && e.t < 30208) quiet = false;
             if (e.t >= 30208 && firstAfter < 0 && e.on) firstAfter = e.t;
         }
@@ -411,11 +420,11 @@ int main()
         const auto ev = simulate (p, r);
         const auto a = analyse (ev);
         bool offAtJump = false;
-        for (const auto& e : ev) if (! e.on && e.note == 37 && e.t == 7168) offAtJump = true;
+        for (const auto& e : ev) if (! e.on && e.note == 49 && e.t == 7168) offAtJump = true;
         CHECK (a.ok && a.sounding <= 1 && offAtJump);
         long long firstOn = -1; int firstNote = 0;
         for (const auto& e : ev) if (e.on && e.t >= 7168) { firstOn = e.t; firstNote = e.note; break; }
-        CHECK (std::llabs (firstOn - 11968) <= 1 && firstNote == 36 + 42 % 8);
+        CHECK (std::llabs (firstOn - 11968) <= 1 && firstNote == 48 + 42 % 8);
         CHECK (onsOnBoundaries (ev));
     }
     {   // a small difference (0.01 quarter) is not a jump: the note goes on; 0.05 is a jump
@@ -426,7 +435,7 @@ int main()
             r.host = [jump] (long long t) { fg::HostBlock h; h.playing = true; h.havePpq = true; h.ppq = (double) t * kPps + (t >= 7168 ? jump : 0.0); return h; };
             const auto ev = simulate (p, r);
             long long offTime = -1;
-            for (const auto& e : ev) if (! e.on && e.note == 37) { offTime = e.t; break; }
+            for (const auto& e : ev) if (! e.on && e.note == 49) { offTime = e.t; break; }
             CHECK (analyse (ev).ok);
             if (jump < 0.02) CHECK (std::llabs (offTime - (9000 - (long long) std::llround (jump / kPps))) <= 1);
             else CHECK (offTime == 7168);
@@ -489,7 +498,7 @@ int main()
     {
         fg::TrunkPlayer p;
         Run r = makeRun (60000);
-        r.settings = [] (long long t) { fg::PlayerSettings s; s.rate = t >= 7168 ? 4 : 6; return s; };    // 1/16 -> 1/8 inside note 1 (6000 to 9000)
+        r.settings = [] (long long t) { fg::PlayerSettings s = plainSettings(); s.rate = t >= 7168 ? 4 : 6; return s; };    // 1/16 -> 1/8 inside note 1 (6000 to 9000)
         const auto ev = simulate (p, r);
         CHECK (analyse (ev).ok && analyse (ev).sounding == 0);
         long long afterFirst = -1;
@@ -500,7 +509,7 @@ int main()
     {
         fg::TrunkPlayer p;
         Run r = makeRun (200000);
-        r.settings = [] (long long t) { fg::PlayerSettings s; s.rate = t >= 100352 ? 6 : 0; return s; };  // 1 bar -> 1/16 at about 4.18 quarters
+        r.settings = [] (long long t) { fg::PlayerSettings s = plainSettings(); s.rate = t >= 100352 ? 6 : 0; return s; };  // 1 bar -> 1/16 at about 4.18 quarters
         const auto ev = simulate (p, r);
         const auto a = analyse (ev);
         CHECK (a.ok && a.sounding <= 1);
@@ -519,7 +528,7 @@ int main()
     {
         fg::TrunkPlayer p;
         Run r = makeRun (96000);
-        r.settings = [] (long long t) { fg::PlayerSettings s; s.ratio = t >= 48128 ? 5 : 4; return s; };   // x1 -> x2
+        r.settings = [] (long long t) { fg::PlayerSettings s = plainSettings(); s.ratio = t >= 48128 ? 5 : 4; return s; };   // x1 -> x2
         const auto ev = simulate (p, r);
         CHECK (analyse (ev).ok && analyse (ev).sounding <= 1);
         CHECK (onsOnBoundaries (ev));
@@ -529,7 +538,7 @@ int main()
     {
         fg::TrunkPlayer p;
         Run r = makeRun (96000);
-        r.settings = [] (long long t) { fg::PlayerSettings s; s.length = t >= 30208 ? 3 : 8; return s; };
+        r.settings = [] (long long t) { fg::PlayerSettings s = plainSettings(); s.length = t >= 30208 ? 3 : 8; return s; };
         const auto ev = simulate (p, r);
         CHECK (analyse (ev).ok && analyse (ev).sounding <= 1);
         CHECK (onsOnBoundaries (ev));                                                          // each note is step (k mod LENGTH in effect)
@@ -548,7 +557,7 @@ int main()
         r.settings = fixedSettings (fg::kDefaultRate, fg::kDefaultRatio, 0);
         const auto ev = simulate (p, r);
         bool allFirst = ! ev.empty();
-        for (const auto& e : ev) if (e.on && e.note != 36) allFirst = false;
+        for (const auto& e : ev) if (e.on && e.note != 48) allFirst = false;
         CHECK (allFirst);
     }
 
@@ -603,12 +612,12 @@ int main()
         simulate (p, r);
         CHECK (p.gateOpen());
         fg::NoteEvent out[4];
-        CHECK (p.releaseHeld (out, 4) == 1 && ! out[0].on && out[0].note == 37 && out[0].offset == 0);
+        CHECK (p.releaseHeld (out, 4) == 1 && ! out[0].on && out[0].note == 49 && out[0].offset == 0);
         CHECK (! p.gateOpen() && p.currentStep() == -1 && ! p.running());
         CHECK (p.releaseHeld (out, 4) == 0);                 // nothing left to release
         // playing again from the middle of a step plays nothing until the next boundary
         fg::HostBlock h; h.playing = true; h.havePpq = true; h.ppq = 7168 * kPps;
-        fg::PlayerSettings s; s.length = 8;
+        fg::PlayerSettings s = plainSettings(); s.length = 8;
         const auto data = makeData();
         fg::NoteEvent blk[8];
         const int n = p.process (kSr, 512, h, s, data, blk, 8);
@@ -620,7 +629,7 @@ int main()
         fg::TrunkPlayer p;
         CHECK (p.currentStep() == -1 && ! p.gateOpen() && ! p.running() && p.stepCount() == 0 && p.noteCount() == 0);
         fg::HostBlock h; h.playing = false; h.havePpq = true; h.ppq = 0.0;
-        fg::PlayerSettings s;
+        fg::PlayerSettings s = plainSettings();
         const auto data = makeData();
         fg::NoteEvent blk[8];
         CHECK (p.process (kSr, 512, h, s, data, blk, 8) == 0 && p.currentStep() == -1 && ! p.running());
@@ -633,25 +642,218 @@ int main()
         CHECK (p.currentStep() == 5);
     }
 
-    // ---- notes outside 0 to 127 are pulled in, and every note-on has the same velocity ----
+    // ---- a stored note outside the 5-octave range is pulled in to its top, and every note-on has the same velocity ----
     {
         fg::TrunkPlayer p;
         Run r = makeRun (6000);
         r.data.steps[0].note = 250;
         const auto ev = simulate (p, r);
-        CHECK (! ev.empty() && ev[0].on && ev[0].note == 127 && ev[0].velocity == fg::kPlayerVelocity);
+        CHECK (! ev.empty() && ev[0].on && ev[0].note == 48 + fg::kStoredNoteMax && ev[0].velocity == fg::kPlayerVelocity);
     }
 
     // ---- an instance that is never started, or a run of zero-length blocks, sends nothing and does not crash ----
     {
         fg::TrunkPlayer p;
         fg::HostBlock h; h.playing = true; h.havePpq = true;
-        fg::PlayerSettings s;
+        fg::PlayerSettings s = plainSettings();
         const auto data = makeData();
         fg::NoteEvent blk[4];
         CHECK (p.process (kSr, 0, h, s, data, blk, 4) == 0);
         CHECK (p.process (0.0, 512, h, s, data, blk, 4) == 0);
         CHECK (p.process (kSr, 512, h, s, data, blk, 0) == 0);
+    }
+
+
+    // =====================================================================================================================
+    // Milestone 4: orders, Scale / Key / Root and RESET in the clock
+    // =====================================================================================================================
+    {   // every order, a few lengths: the note at boundary k is the step orderStepIndex (k), and every block size gives the same notes
+        const int lengths[] = { 1, 3, 8, 13, 20 };
+        for (int order = 0; order < fg::kNumOrders; ++order)
+            for (int L : lengths)
+            {
+                std::vector<Ev> first;
+                for (int block : { 512, 64, 1, 8192 })
+                {
+                    if (block == 1 && (L != 8 || order > 2)) continue;           // 1-sample blocks are slow: a few cases are enough
+                    fg::TrunkPlayer p;
+                    Run r = makeRun (block == 1 ? 12000 : 192000);
+                    r.block = block;
+                    const int ord = order, len = L;
+                    r.settings = [=] (long long) { fg::PlayerSettings s = plainSettings(); s.length = len; s.order = ord; s.pendRepeat = ord == 2 && len == 8; s.seed = 99; return s; };
+                    const auto ev = simulate (p, r);
+                    const auto a = analyse (ev);
+                    CHECK (a.ok && a.sounding <= 1);
+                    const auto ons = onsOf (ev);
+                    bool right = ! ons.empty();
+                    for (std::size_t i = 0; i < ons.size(); ++i)
+                    {
+                        const int idx = fg::orderStepIndex ((long long) i, L, order, order == 2 && L == 8, 99, fg::ChanceMix());
+                        right = right && ons[i].note == 48 + idx && std::llabs (ons[i].t - 6000LL * (long long) i) <= 1;
+                    }
+                    CHECK (right);
+                    if (block == 512) first = ev;
+                    else if (block != 1) CHECK (sameEvents (first, ev));
+                }
+            }
+    }
+
+    {   // the step shown to the window follows the order, also when Logic starts in the middle of a step
+        fg::TrunkPlayer p;
+        fg::HostBlock h; h.playing = true; h.havePpq = true; h.ppq = 5 * 0.25 + 0.1;
+        fg::PlayerSettings s = plainSettings();
+        s.order = fg::kOrderReverse;
+        const auto data = makeData();
+        fg::NoteEvent blk[8];
+        p.process (kSr, 64, h, s, data, blk, 8);
+        CHECK (p.currentStep() == 7 - 5);
+        s.order = fg::kOrderConverge;
+        fg::TrunkPlayer q;
+        q.process (kSr, 64, h, s, data, blk, 8);
+        CHECK (q.currentStep() == fg::orderStepIndex (5, 8, fg::kOrderConverge, false, 1, fg::ChanceMix()));
+    }
+
+    {   // Scale, Key and Root: a stored place plays the pitch fg::pitchFor gives, applied as each note starts
+        fg::TrunkPlayer p;
+        Run r = makeRun (24000);
+        r.data.steps[0].note = 12;                                                    // octave 1, degree 0
+        r.data.steps[1].note = 14;                                                    // degree 2
+        r.settings = [] (long long) { fg::PlayerSettings s; s.scale = 0; s.key = 2; s.root = 2; s.length = 2; return s; };
+        const auto ons = onsOf (simulate (p, r));
+        CHECK (ons.size() >= 2 && ons[0].note == fg::pitchFor (12, 0, 2, 2) && ons[1].note == fg::pitchFor (14, 0, 2, 2));
+        CHECK (ons[0].note == 66 && ons[1].note == 69);                              // key D, Root +2: the place of degree 0 plays F# (62 + 4), degree 2 plays A (62 + 7)
+    }
+    {   // changing Key or Scale while playing changes the next note, never one that is sounding; every note-off matches its note-on
+        fg::TrunkPlayer p;
+        Run r = makeRun (96000);
+        r.settings = [] (long long t) { fg::PlayerSettings s = plainSettings(); s.length = 4; s.key = t >= 40000 ? 5 : 0; s.scale = t >= 70000 ? 0 : kChromatic; return s; };
+        const auto ev = simulate (p, r);
+        const auto a = analyse (ev);
+        CHECK (a.ok && a.sounding <= 1);
+        bool keyed = true;
+        for (const auto& e : onsOf (ev))
+        {
+            const int stored = (int) floorMod ((long long) std::llround (e.ppq / 0.25), 4);
+            const int expected = fg::pitchFor (stored, e.t >= 70000 ? 0 : kChromatic, e.t >= 40000 ? 5 : 0, 0);
+            keyed = keyed && e.note == expected;
+        }
+        CHECK (keyed);
+    }
+
+    {   // RESET: the next step to start plays step 1 of the order, and counting goes on from there
+        fg::TrunkPlayer p;
+        Run r = makeRun (96000);
+        r.settings = [] (long long t) { fg::PlayerSettings s = plainSettings(); s.resetCount = t >= 20000 ? 1 : 0; return s; };   // pressed between boundary 3 (18000) and 4 (24000)
+        const auto ons = onsOf (simulate (p, r));
+        bool ok = ons.size() >= 12;
+        for (std::size_t i = 0; ok && i < ons.size(); ++i)
+        {
+            const int expected = i < 4 ? (int) i : (int) ((i - 4) % 8);
+            ok = ons[i].note == 48 + expected && std::llabs (ons[i].t - 6000LL * (long long) i) <= 1;
+        }
+        CHECK (ok);
+    }
+    {   // RESET with Reverse restarts the reverse pass; with Pendulum it restarts the pendulum
+        for (int order : { (int) fg::kOrderReverse, (int) fg::kOrderPendulum })
+        {
+            fg::TrunkPlayer p;
+            Run r = makeRun (96000);
+            const int ord = order;
+            r.settings = [=] (long long t) { fg::PlayerSettings s = plainSettings(); s.order = ord; s.resetCount = t >= 20000 ? 1 : 0; return s; };
+            const auto ons = onsOf (simulate (p, r));
+            bool ok = ons.size() >= 12;
+            for (std::size_t i = 4; ok && i < ons.size(); ++i)
+                ok = ons[i].note == 48 + fg::orderStepIndex ((long long) (i - 4), 8, ord, false, 1, fg::ChanceMix());
+            CHECK (ok);
+        }
+    }
+    {   // RESET pressed twice (two separate presses) restarts twice; a press in the same block as a boundary applies to that boundary
+        fg::TrunkPlayer p;
+        Run r = makeRun (96000);
+        r.settings = [] (long long t) { fg::PlayerSettings s = plainSettings(); s.resetCount = (t >= 20000 ? 1 : 0) + (t >= 50000 ? 1 : 0); return s; };   // boundary 8 is at 48000, 9 at 54000
+        const auto ons = onsOf (simulate (p, r));
+        bool ok = ons.size() >= 14;
+        for (std::size_t i = 0; ok && i < ons.size(); ++i)
+        {
+            int expected;
+            if (i < 4) expected = (int) i;
+            else if (i < 9) expected = (int) (i - 4);
+            else expected = (int) (i - 9);
+            ok = ons[i].note == 48 + expected % 8;
+        }
+        CHECK (ok);
+    }
+    {   // a RESET count that is already above 0 when the instance starts is not a press
+        fg::TrunkPlayer p;
+        Run r = makeRun (60000);
+        r.settings = [] (long long) { fg::PlayerSettings s = plainSettings(); s.resetCount = 5; return s; };
+        const auto ons = onsOf (simulate (p, r));
+        bool ok = ons.size() >= 8;
+        for (std::size_t i = 0; ok && i < ons.size(); ++i) ok = ons[i].note == 48 + (int) (i % 8);
+        CHECK (ok);
+    }
+    {   // a RESET pressed while Logic is stopped has nothing to restart: playback then starts locked to the bars
+        fg::TrunkPlayer p;
+        Run r = makeRun (60000);
+        r.host = [] (long long t)
+        {
+            fg::HostBlock h; h.playing = t >= 12288; h.havePpq = true; h.bpm = kBpm;
+            h.ppq = 0.75 + (double) (t >= 12288 ? t - 12288 : 0) * kPps;            // starts playing at the start of step 3 (0.75 quarter)
+            return h;
+        };
+        r.settings = [] (long long t) { fg::PlayerSettings s = plainSettings(); s.resetCount = t >= 6144 ? 1 : 0; return s; };
+        const auto ons = onsOf (simulate (p, r));
+        CHECK (! ons.empty() && ons[0].note == 48 + 3);
+    }
+    {   // RESET is forgotten when Logic jumps: after a jump the step is the one that belongs to Logic's bars again
+        fg::TrunkPlayer p;
+        Run r = makeRun (120000);
+        r.host = [] (long long t)
+        {
+            fg::HostBlock h; h.playing = true; h.havePpq = true; h.bpm = kBpm;
+            h.ppq = t < 61440 ? (double) t * kPps : 10.25 + (double) (t - 61440) * kPps;      // jump to 10.25 quarters = boundary 41
+            return h;
+        };
+        r.settings = [] (long long t) { fg::PlayerSettings s = plainSettings(); s.resetCount = t >= 20000 ? 1 : 0; return s; };
+        const auto ev = simulate (p, r);
+        long long firstAfter = -1; int noteAfter = -1;
+        for (const auto& e : onsOf (ev)) if (e.t >= 61440) { firstAfter = e.t; noteAfter = e.note; break; }
+        CHECK (firstAfter >= 0 && noteAfter == 48 + 41 % 8);                           // not the reset-based step (41 - 4) % 8 = 5
+        CHECK (analyse (ev).ok);
+    }
+    {   // the same after Logic stops and starts again
+        fg::TrunkPlayer p;
+        Run r = makeRun (120000);
+        r.host = [] (long long t)
+        {
+            fg::HostBlock h; h.playing = t < 40960 || t >= 61440; h.havePpq = true; h.bpm = kBpm;
+            h.ppq = (double) t * kPps;                                                  // the song position keeps moving, as in Logic's "stop, then play from here"
+            return h;
+        };
+        r.settings = [] (long long t) { fg::PlayerSettings s = plainSettings(); s.resetCount = t >= 20000 ? 1 : 0; return s; };
+        const auto ev = simulate (p, r);
+        long long afterRestart = -1; int note = -1; long long k = -1;
+        for (const auto& e : onsOf (ev)) if (e.t >= 61440) { afterRestart = e.t; note = e.note; k = (long long) std::llround (e.ppq / 0.25); break; }
+        CHECK (afterRestart >= 0 && note == 48 + (int) floorMod (k, 8));
+    }
+    {   // two instances with the same settings stay together in every order, even when one starts later (the random orders too)
+        for (int order = 0; order < fg::kNumOrders; ++order)
+        {
+            fg::TrunkPlayer a, b;
+            Run ra = makeRun (192000), rb = makeRun (96000);
+            rb.host = linearHost (96000.0 * kPps);                                       // starts at the middle, as if on another track
+            rb.block = 777;
+            const int ord = order;
+            ra.settings = rb.settings = [=] (long long) { fg::PlayerSettings s = plainSettings(); s.order = ord; s.length = 11; s.seed = 4242; return s; };
+            const auto ea = onsOf (simulate (a, ra)), eb = onsOf (simulate (b, rb));
+            bool locked = ! eb.empty();
+            for (std::size_t i = 0; i < eb.size() && locked; ++i)
+            {
+                const std::size_t j = i + 16;                                            // rb began 96000 samples = 16 steps later
+                locked = j < ea.size() && ea[j].note == eb[i].note;
+            }
+            CHECK (locked);
+        }
     }
 
     std::printf ("clock tests: %d checks passed\n", checks - failures);

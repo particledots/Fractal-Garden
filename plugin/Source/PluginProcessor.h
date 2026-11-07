@@ -1,18 +1,21 @@
 // The plugin wrapper: a MIDI effect (AU type aumi, no audio buses, MIDI in and MIDI out), set up like Dotriaconta-tone.
 //
 // Milestone 3: the trunk plays, locked to Logic. Each block the wrapper reads Logic's play state, tempo, time signature and song
-// position and hands them, with RATE, RATIO, LENGTH and the 64 steps, to the engine's clock (fg::TrunkPlayer), which says which
-// notes start and stop and at which sample. The notes go out as MIDI on channel 1; everything else that arrives from Logic passes
+// position and hands them, with the controls and the 64 steps, to the engine's clock (fg::TrunkPlayer), which says which notes
+// start and stop and at which sample. The notes go out as MIDI on channel 1; everything else that arrives from Logic passes
 // through unchanged. The wrapper also holds the 46 controls, the 64 steps of data and the editor's tab / page / window choice, and
 // saves all of them with the Logic project.
 //
-// Two temporary extras for this milestone's tests (they add no control and change nothing that is saved):
-//  - requestTestNote(): clicking the STEP lamp in the header asks for one short note while Logic is STOPPED. It shows whether
-//    Logic keeps calling a MIDI effect while stopped (which decides whether "click a step to hear it" can be built later).
-//  - a few counters (getDiagnostics) shown in a small line under the header.
+// Milestone 4: RATE, RATIO, LENGTH, SCALE, KEY, ROOT and ORDER (with Repeat Ends and the Chance mix numbers) are handed to the clock
+// every block. The momentary buttons act like this:
+//  - RESET: counted on whatever thread changes it (it can be Logic's automation); the audio thread sees the count change and
+//    restarts the order at the next step.
+//  - ROTATE and TRANSPOSE: counted the same way, then carried out on the window thread (they change the step data for good).
+// Then the button is switched off again a few times a second ("act, then pop back"). A project saved while one was on opens with all
+// of them off and none of them acts on loading.
 //
-// Housekeeping: a few times a second, on the window thread, the momentary buttons that are on are switched off again (they act,
-// then pop back). A project saved while one was on opens with all of them off.
+// Logic does not call a MIDI effect while its transport is stopped (milestone 3 test, both Macs), so everything here only sounds
+// while Logic plays. Edits made while stopped are heard the next time it plays.
 
 #pragma once
 
@@ -23,7 +26,7 @@
 
 #include <atomic>
 
-class FractalGardenProcessor : public juce::AudioProcessor, private juce::Timer
+class FractalGardenProcessor : public juce::AudioProcessor, private juce::Timer, private juce::AudioProcessorValueTreeState::Listener
 {
 public:
     FractalGardenProcessor();
@@ -58,6 +61,8 @@ public:
     // ---- the 64 steps (saved in the plugin state) ----
     fg::StepData getSteps() const;                          // a copy
     void setStep (int index, const fg::Step& step);         // changes one step and saves it into the state
+    void rotateTrunk (int direction);                       // +1 RIGHT / -1 LEFT: the first LENGTH steps move one place, for good
+    void transposeTrunk (int scaleSteps);                   // +1 UP / -1 DOWN: the first LENGTH steps move one scale step, for good
     int getStepsRevision() const { return stepsRevision.load(); }   // goes up whenever the steps change (the window repaints on it)
 
     // ---- editor choices (saved in the plugin state) ----
@@ -87,19 +92,11 @@ public:
     };
     PlayerView getPlayerView() const;
 
-    // ---- temporary test aids for milestone 3 ----
-    void requestTestNote();                     // from the window thread; only sounds while Logic is stopped, and only if asked just now
-    struct Diagnostics
-    {
-        int stoppedBlocks = 0;                  // blocks the plugin was asked to process while Logic was stopped
-        int noPositionBlocks = 0;               // blocks while Logic was playing but gave no song position
-        int testRequests = 0, testNotesSent = 0;
-    };
-    Diagnostics getDiagnostics() const;
-
 private:
     void timerCallback() override;
+    void parameterChanged (const juce::String& parameterId, float newValue) override;     // counts presses of the momentary buttons (any thread)
     void switchOff (const char* parameterId);
+    void applyPendingButtons();
     void saveStepsToState();
     void loadStepsFromState();
     void releaseEverything (juce::MidiBuffer& out);     // note-offs for whatever this plugin has started (bypass)
@@ -124,18 +121,22 @@ private:
     std::atomic<float>* rateParam = nullptr;
     std::atomic<float>* ratioParam = nullptr;
     std::atomic<float>* lengthParam = nullptr;
+    std::atomic<float>* scaleParam = nullptr;
+    std::atomic<float>* keyParam = nullptr;
+    std::atomic<float>* rootParam = nullptr;
+    std::atomic<float>* orderParam = nullptr;
+    std::atomic<float>* pendRepeatParam = nullptr;
+    std::atomic<float>* chanceParams[fg::ChanceMix::kNumModes] = {};
+    std::atomic<float>* chanceRunMinParam = nullptr;
+    std::atomic<float>* chanceRunMaxParam = nullptr;
+
+    std::atomic<std::uint32_t> orderSeed { 1 };                 // seed of the random orders (saved in the state)
+    std::atomic<std::uint32_t> resetCount { 0 };                // goes up at every press of RESET
+    std::atomic<int> pendingRotateLeft { 0 }, pendingRotateRight { 0 }, pendingTransposeUp { 0 }, pendingTransposeDown { 0 };
     fg::NoteEvent events[kMaxEvents];
     juce::MidiBuffer outBuffer;
     std::atomic<double> sampleRate { 44100.0 };
     std::atomic<bool> panicPending { false };                   // set by prepareToPlay: the first block sends all-notes-off
-
-    // the temporary test note
-    static constexpr int kTestNote = 72;                        // C4 in Logic's naming
-    std::atomic<bool> testRequested { false };
-    std::atomic<juce::uint32> testRequestedAtMs { 0 };
-    bool testNoteSounding = false;
-    long long testNoteSamplesLeft = 0;                          // audio thread only
-    std::atomic<int> diagStopped { 0 }, diagNoPosition { 0 }, diagTestRequests { 0 }, diagTestSent { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FractalGardenProcessor)
 };

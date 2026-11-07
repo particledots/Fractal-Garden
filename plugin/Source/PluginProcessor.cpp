@@ -9,15 +9,38 @@ FractalGardenProcessor::FractalGardenProcessor()
     rateParam   = apvts.getRawParameterValue (fg::id::stepRate);
     ratioParam  = apvts.getRawParameterValue (fg::id::ratio);
     lengthParam = apvts.getRawParameterValue (fg::id::length);
+    scaleParam  = apvts.getRawParameterValue (fg::id::scale);
+    keyParam    = apvts.getRawParameterValue (fg::id::key);
+    rootParam   = apvts.getRawParameterValue (fg::id::root);
+    orderParam  = apvts.getRawParameterValue (fg::id::order);
+    pendRepeatParam = apvts.getRawParameterValue (fg::id::pendRepeat);
+    chanceParams[fg::ChanceMix::Forward]  = apvts.getRawParameterValue (fg::id::chanceForward);
+    chanceParams[fg::ChanceMix::Backward] = apvts.getRawParameterValue (fg::id::chanceBackward);
+    chanceParams[fg::ChanceMix::Pendulum] = apvts.getRawParameterValue (fg::id::chancePendulum);
+    chanceParams[fg::ChanceMix::PingPong] = apvts.getRawParameterValue (fg::id::chancePingPong);
+    chanceParams[fg::ChanceMix::Random]   = apvts.getRawParameterValue (fg::id::chanceRandom);
+    chanceParams[fg::ChanceMix::Drunk]    = apvts.getRawParameterValue (fg::id::chanceDrunk);
+    chanceRunMinParam = apvts.getRawParameterValue (fg::id::chanceRunMin);
+    chanceRunMaxParam = apvts.getRawParameterValue (fg::id::chanceRunMax);
+
+    // The seed of the random orders: chosen once for a new instance, then saved with the project (so the same bars play the same way).
+    orderSeed.store (((std::uint32_t) juce::Random::getSystemRandom().nextInt() & 0x7fffffffu) | 1u);
+    apvts.state.setProperty (FgParams::kSeedProperty, (int) orderSeed.load(), nullptr);
+
     audioSteps = steps;
     outBuffer.ensureSize (16384);
     saveStepsToState();
+
+    for (const char* id : { fg::id::reset, fg::id::rotateLeft, fg::id::rotateRight, fg::id::transposeDown, fg::id::transposeUp })
+        apvts.addParameterListener (id, this);
     startTimerHz (20);
 }
 
 FractalGardenProcessor::~FractalGardenProcessor()
 {
     stopTimer();
+    for (const char* id : { fg::id::reset, fg::id::rotateLeft, fg::id::rotateRight, fg::id::transposeDown, fg::id::transposeUp })
+        apvts.removeParameterListener (id, this);
 }
 
 //==============================================================================
@@ -34,9 +57,58 @@ void FractalGardenProcessor::switchOff (const char* parameterId)
     }
 }
 
+// A press of a momentary button is counted here, on whatever thread changed the control (the window, or Logic's automation).
+void FractalGardenProcessor::parameterChanged (const juce::String& parameterId, float newValue)
+{
+    if (newValue <= 0.5f)
+        return;                                     // the button popping back off is not a press
+    if (parameterId == fg::id::reset)               ++resetCount;
+    else if (parameterId == fg::id::rotateLeft)     ++pendingRotateLeft;
+    else if (parameterId == fg::id::rotateRight)    ++pendingRotateRight;
+    else if (parameterId == fg::id::transposeDown)  ++pendingTransposeDown;
+    else if (parameterId == fg::id::transposeUp)    ++pendingTransposeUp;
+}
+
+// Rotate and Transpose change the step data, so they are carried out here, on the window thread.
+void FractalGardenProcessor::applyPendingButtons()
+{
+    for (int n = pendingRotateLeft.exchange (0); n > 0; --n)      rotateTrunk (-1);
+    for (int n = pendingRotateRight.exchange (0); n > 0; --n)     rotateTrunk (+1);
+    for (int n = pendingTransposeDown.exchange (0); n > 0; --n)   transposeTrunk (-1);
+    for (int n = pendingTransposeUp.exchange (0); n > 0; --n)     transposeTrunk (+1);
+}
+
+void FractalGardenProcessor::rotateTrunk (int direction)
+{
+    const int length = juce::jlimit (1, fg::kNumSteps, juce::roundToInt (lengthParam->load()));
+    {
+        const juce::ScopedLock sl (stepLock);
+        fg::rotateSteps (steps, length, direction);
+    }
+    saveStepsToState();
+}
+
+void FractalGardenProcessor::transposeTrunk (int scaleSteps)
+{
+    const int length = juce::jlimit (1, fg::kNumSteps, juce::roundToInt (lengthParam->load()));
+    const int scale = juce::jlimit (0, fg::kNumScales - 1, juce::roundToInt (scaleParam->load()));
+    {
+        const juce::ScopedLock sl (stepLock);
+        fg::transposeSteps (steps, length, scaleSteps, scale);
+    }
+    saveStepsToState();
+}
+
 void FractalGardenProcessor::timerCallback()
 {
-    // The momentary buttons act the moment they go on (from milestone 4 on); then they go back off.
+    applyPendingButtons();
+
+    // The editor's page stays on a page that LENGTH reaches (when LENGTH shrinks, the page follows it down).
+    const int lastPage = (juce::jlimit (1, fg::kNumSteps, juce::roundToInt (lengthParam->load())) - 1) / fg::kStepsPerPage;
+    if ((int) apvts.state.getProperty (FgParams::kPageProperty, 0) > lastPage)
+        setEditorPage (lastPage);
+
+    // The momentary buttons act the moment they go on; then they go back off.
     for (const char* id : FgParams::momentaryIds())
         switchOff (id);
     switchTransientButtonsOff.store (false);
@@ -47,8 +119,6 @@ void FractalGardenProcessor::prepareToPlay (double newSampleRate, int)
 {
     sampleRate.store (newSampleRate > 0.0 ? newSampleRate : 44100.0);
     player.reset();
-    testNoteSounding = false;
-    testNoteSamplesLeft = 0;
     panicPending.store (true);          // if Logic restarted its audio while a note sounded, the first block sends all-notes-off
     outBuffer.ensureSize (16384);
 }
@@ -96,11 +166,6 @@ void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
             }
         }
     }
-    if (! host.playing)
-        diagStopped.fetch_add (1);
-    else if (! host.havePpq)
-        diagNoPosition.fetch_add (1);
-
     // 2. The audio thread's copy of the steps (taken only when they changed, and never waiting for the window thread).
     const int revision = stepsRevision.load();
     if (revision != audioStepsRevision)
@@ -118,6 +183,17 @@ void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     settings.rate   = juce::jlimit (0, fg::kNumRates - 1,  juce::roundToInt (rateParam->load()));
     settings.ratio  = juce::jlimit (0, fg::kNumRatios - 1, juce::roundToInt (ratioParam->load()));
     settings.length = juce::jlimit (1, fg::kNumSteps,      juce::roundToInt (lengthParam->load()));
+    settings.order  = juce::jlimit (0, fg::kNumOrders - 1, juce::roundToInt (orderParam->load()));
+    settings.pendRepeat = pendRepeatParam->load() > 0.5f;
+    settings.seed   = orderSeed.load();
+    for (int i = 0; i < fg::ChanceMix::kNumModes; ++i)
+        settings.chance.weight[i] = juce::jlimit (0, 100, juce::roundToInt (chanceParams[i]->load()));
+    settings.chance.runMin = juce::jlimit (1, 32, juce::roundToInt (chanceRunMinParam->load()));
+    settings.chance.runMax = juce::jlimit (1, 32, juce::roundToInt (chanceRunMaxParam->load()));
+    settings.scale  = juce::jlimit (0, fg::kNumScales - 1, juce::roundToInt (scaleParam->load()));
+    settings.key    = juce::jlimit (0, fg::kNumKeys - 1,   juce::roundToInt (keyParam->load()));
+    settings.root   = juce::jlimit (-24, 24,               juce::roundToInt (rootParam->load()));
+    settings.resetCount = resetCount.load();
     const int numEvents = player.process (sampleRate.load(), numSamples, host, settings, audioSteps, events, kMaxEvents);
 
     // 4. Out: everything that arrived from Logic passes through unchanged, and the sequencer's notes are added at their sample positions.
@@ -137,32 +213,6 @@ void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
                             juce::jlimit (0, lastSample, e.offset));
     }
 
-    // 5. The temporary test note: only when Logic is stopped, and only if the click was made just now (a click that Logic never
-    //    delivered a block for must not sound seconds later, when Logic starts).
-    if (testRequested.exchange (false))
-    {
-        const juce::uint32 age = juce::Time::getMillisecondCounter() - testRequestedAtMs.load();
-        if (! host.playing && age < 1500)
-        {
-            if (testNoteSounding)
-                outBuffer.addEvent (juce::MidiMessage::noteOff (fg::kPlayerChannel, kTestNote), 0);
-            outBuffer.addEvent (juce::MidiMessage::noteOn (fg::kPlayerChannel, kTestNote, (juce::uint8) fg::kPlayerVelocity), 0);
-            testNoteSounding = true;
-            testNoteSamplesLeft = (long long) (sampleRate.load() * 0.25);
-            diagTestSent.fetch_add (1);
-        }
-    }
-    if (testNoteSounding)
-    {
-        if (testNoteSamplesLeft < numSamples)
-        {
-            outBuffer.addEvent (juce::MidiMessage::noteOff (fg::kPlayerChannel, kTestNote), (int) juce::jmax ((long long) 0, testNoteSamplesLeft));
-            testNoteSounding = false;
-        }
-        else
-            testNoteSamplesLeft -= numSamples;
-    }
-
     midi.swapWith (outBuffer);
 }
 
@@ -178,12 +228,6 @@ void FractalGardenProcessor::releaseEverything (juce::MidiBuffer& out)
     const int count = player.releaseHeld (events, kMaxEvents);
     for (int i = 0; i < count; ++i)
         out.addEvent (juce::MidiMessage::noteOff (fg::kPlayerChannel, events[i].note), 0);
-    if (testNoteSounding)
-    {
-        out.addEvent (juce::MidiMessage::noteOff (fg::kPlayerChannel, kTestNote), 0);
-        testNoteSounding = false;
-    }
-    testRequested.store (false);
 }
 
 FractalGardenProcessor::HostSnapshot FractalGardenProcessor::getHostSnapshot() const
@@ -209,23 +253,6 @@ FractalGardenProcessor::PlayerView FractalGardenProcessor::getPlayerView() const
     v.stepCount = player.stepCount();
     v.noteCount = player.noteCount();
     return v;
-}
-
-void FractalGardenProcessor::requestTestNote()
-{
-    diagTestRequests.fetch_add (1);
-    testRequestedAtMs.store (juce::Time::getMillisecondCounter());
-    testRequested.store (true);
-}
-
-FractalGardenProcessor::Diagnostics FractalGardenProcessor::getDiagnostics() const
-{
-    Diagnostics d;
-    d.stoppedBlocks = diagStopped.load();
-    d.noPositionBlocks = diagNoPosition.load();
-    d.testRequests = diagTestRequests.load();
-    d.testNotesSent = diagTestSent.load();
-    return d;
 }
 
 //==============================================================================
@@ -324,7 +351,18 @@ void FractalGardenProcessor::setStateInformation (const void* data, int sizeInBy
     if (auto xml = getXmlFromBinary (data, sizeInBytes))
         if (xml->hasTagName (apvts.state.getType()))
         {
+            // Loading a project is not a press of any button, even if a button was on when it was saved.
+            const auto resetBefore = resetCount.load();
             apvts.replaceState (juce::ValueTree::fromXml (*xml));
+            resetCount.store (resetBefore);
+            pendingRotateLeft.store (0); pendingRotateRight.store (0);
+            pendingTransposeDown.store (0); pendingTransposeUp.store (0);
+
+            if (apvts.state.hasProperty (FgParams::kSeedProperty))
+                orderSeed.store ((std::uint32_t) (int) apvts.state.getProperty (FgParams::kSeedProperty) | 1u);
+            else
+                apvts.state.setProperty (FgParams::kSeedProperty, (int) orderSeed.load(), nullptr);      // a project from 0.3.0 or earlier
+
             loadStepsFromState();
             switchTransientButtonsOff.store (true);
         }

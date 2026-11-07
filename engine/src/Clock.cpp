@@ -12,12 +12,6 @@ namespace fg
 
         // How many times faster than the rate each entry of kRatioNames runs (/8 ... x8).
         constexpr double kRatioSpeed[kNumRatios] = { 1.0 / 8.0, 1.0 / 4.0, 1.0 / 3.0, 1.0 / 2.0, 1.0, 2.0, 3.0, 4.0, 8.0 };
-
-        long long floorMod (long long k, int length)
-        {
-            const long long m = k % length;
-            return m < 0 ? m + length : m;
-        }
     }
 
     double stepLengthQuarters (int rateIndex, int ratioIndex, int sigNum, int sigDen)
@@ -34,6 +28,8 @@ namespace fg
     void TrunkPlayer::reset()
     {
         wasRunning = false;
+        haveResetCount = false;
+        anchorK = 0;
         expectedPpq = 0.0;
         lastBoundaryPpq = 0.0;
         gateOffPpq = -1.0;
@@ -53,6 +49,7 @@ namespace fg
         held.store (false);
         gateOffPpq = -1.0;
         wasRunning = false;           // the next block starts over (it is treated like a start)
+        anchorK = 0;
         isRunning.store (false);
         shownStep.store (-1);
         return n;
@@ -81,12 +78,19 @@ namespace fg
 
         const bool running = host.playing && host.havePpq && sampleRate > 0.0 && numSamples > 0;
         isRunning.store (running);
+        if (! haveResetCount)
+        {
+            seenResetCount = settings.resetCount;       // a RESET pressed before this point is not acted on later
+            haveResetCount = true;
+        }
 
         if (! running)
         {
-            // Logic is stopped (or gave no position): the sounding note ends now and the next start begins afresh.
+            // Logic is stopped (or gave no position): the sounding note ends now and the next start begins afresh, locked to the bars.
             release (0);
             wasRunning = false;
+            anchorK = 0;
+            seenResetCount = settings.resetCount;       // RESET while stopped has nothing to restart
             shownStep.store (-1);
             return n;
         }
@@ -105,11 +109,14 @@ namespace fg
         if (relocated)
             release (0);
         const bool continuing = wasRunning && ! relocated;
+        if (! continuing)
+            anchorK = 0;                                // a start, a jump or a cycle: back to Logic's bars
 
         // Where the position is now, for the window (the steps that start inside this block update it below).
         if (! continuing)
         {
-            shownStep.store ((int) floorMod ((long long) std::floor ((ppq0 + eps) / stepLen), length));
+            shownStep.store (orderStepIndex ((long long) std::floor ((ppq0 + eps) / stepLen), length, settings.order, settings.pendRepeat,
+                                             settings.seed, settings.chance));
             // "the last boundary handled" is the one just before the first boundary this run will handle
             lastBoundaryPpq = (double) ((long long) std::ceil ((ppq0 - eps) / stepLen) - 1) * stepLen;
         }
@@ -120,6 +127,13 @@ namespace fg
         long long k = (long long) std::ceil ((ppq0 - eps) / stepLen);
         if (continuing)
             k = std::max (k, (long long) std::floor ((lastBoundaryPpq + eps) / stepLen) + 1);
+
+        // RESET: the next step to play is step 1 of the order.
+        if (settings.resetCount != seenResetCount)
+        {
+            seenResetCount = settings.resetCount;
+            anchorK = k;
+        }
 
         for (;;)
         {
@@ -141,7 +155,7 @@ namespace fg
             const int offset = toOffset (b);
             release (offset);
 
-            const int index = (int) floorMod (k, length);
+            const int index = orderStepIndex (k - anchorK, length, settings.order, settings.pendRepeat, settings.seed, settings.chance);
             const Step& step = data.steps[(std::size_t) index];
             shownStep.store (index);
             stepsStarted.fetch_add (1);
@@ -150,7 +164,7 @@ namespace fg
             // A note-on is only written when there is also room left for its note-off.
             if (step.on && n + 2 <= maxOut)
             {
-                const int note = std::clamp ((int) step.note, 0, 127);
+                const int note = pitchFor (step.note, settings.scale, settings.key, settings.root);
                 emit (offset, true, note, kPlayerVelocity);
                 held.store (true);
                 heldNote = note;

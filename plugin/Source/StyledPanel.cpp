@@ -228,12 +228,16 @@ StepEditor::StepEditor (FractalGardenProcessor& p) : proc (p)
 }
 
 int StepEditor::length() const   { return readInt (proc.getValueTreeState(), fg::id::length); }
+int StepEditor::scaleIndex() const { return juce::jlimit (0, fg::kNumScales - 1, readInt (proc.getValueTreeState(), fg::id::scale)); }
+int StepEditor::keyIndex() const   { return juce::jlimit (0, fg::kNumKeys - 1, readInt (proc.getValueTreeState(), fg::id::key)); }
+int StepEditor::rootValue() const  { return readInt (proc.getValueTreeState(), fg::id::root); }
+int StepEditor::activePages() const { return juce::jlimit (1, fg::kNumPages, (length() + fg::kStepsPerPage - 1) / fg::kStepsPerPage); }
 int StepEditor::modMode() const  { return readInt (proc.getValueTreeState(), fg::id::modMode); }
 int StepEditor::tab() const      { return proc.getEditorTab(); }
 int StepEditor::page() const     { return proc.getEditorPage(); }
 
 void StepEditor::selectTab (int t)   { proc.setEditorTab (t);  refresh(); repaint(); }
-void StepEditor::selectPage (int p)  { proc.setEditorPage (p); refresh(); repaint(); }
+void StepEditor::selectPage (int p)  { proc.setEditorPage (juce::jlimit (0, activePages() - 1, p)); refresh(); repaint(); }
 
 void StepEditor::toggleStep (int i)
 {
@@ -247,9 +251,10 @@ void StepEditor::toggleStep (int i)
 void StepEditor::refresh()
 {
     const int rev = proc.getStepsRevision(), t = tab(), pg = page(), len = length(), mm = modMode();
-    if (rev != lastRevision || t != lastTab || pg != lastPage || len != lastLength || mm != lastModMode)
+    const int sc = scaleIndex(), ky = keyIndex(), rt = rootValue();
+    if (rev != lastRevision || t != lastTab || pg != lastPage || len != lastLength || mm != lastModMode || sc != lastScale || ky != lastKey || rt != lastRoot)
     {
-        lastRevision = rev; lastTab = t; lastPage = pg; lastLength = len; lastModMode = mm;
+        lastRevision = rev; lastTab = t; lastPage = pg; lastLength = len; lastModMode = mm; lastScale = sc; lastKey = ky; lastRoot = rt;
         repaint();
     }
 }
@@ -258,7 +263,7 @@ double StepEditor::overviewFraction (const fg::Step& s, int tabIndex) const
 {
     switch (tabIndex)
     {
-        case 0:  return (s.note - fg::kNoteMin) / (double) (fg::kNoteMax - fg::kNoteMin);
+        case 0:  return fg::storedToDegree (s.note, scaleIndex()) / (double) juce::jmax (1, fg::degreeCount (scaleIndex()) - 1);
         case 1:  return s.gate / (double) fg::kGateMax;
         case 2:  return s.slew / (double) fg::kSlewMax;
         case 3:  return s.ratchet / (double) fg::kRatchetMax;
@@ -283,7 +288,7 @@ void StepEditor::paint (juce::Graphics& g)
 
     // Page chips
     drawAt (g, "PAGE", 64.0f, 154.0f, mono (12.0f), muted);
-    const int pagesActive = (len + 7) / 8;
+    const int pagesActive = activePages();
     for (int p = 0; p < 8; ++p)
         drawChip (g, { (float) (106 + p * 46), 142.0f, 42.0f, 24.0f }, juce::String (p + 1), p == pg, amber, 13.0f, p >= pagesActive);
 
@@ -359,7 +364,7 @@ void StepEditor::paint (juce::Graphics& g)
                 char nm[16];
                 switch (tb)
                 {
-                    case 0:  fg::noteName (st.note, nm, sizeof nm); readout = nm; break;
+                    case 0:  fg::noteName (fg::pitchFor (st.note, scaleIndex(), keyIndex(), rootValue()), nm, sizeof nm); readout = nm; break;
                     case 1:  readout = juce::String (st.gate) + " %"; break;
                     case 2:  readout = juce::String (st.slew) + " %"; break;
                     case 3:  readout = "x" + juce::String (st.ratchet); break;
@@ -397,19 +402,42 @@ void StepEditor::paint (juce::Graphics& g)
 
 void StepEditor::dragValue (int stepIndex, int tabIndex, float mouseY)
 {
+    setValue (stepIndex, tabIndex, 1.0f - juce::jlimit (0.0f, 1.0f, (mouseY - 198.0f - 4.0f) / (110.0f - 8.0f)));
+}
+
+void StepEditor::setValue (int stepIndex, int tabIndex, float fraction)
+{
     if (stepIndex < 0 || stepIndex >= fg::kNumSteps || stepIndex >= length())
         return;
-    const float f = 1.0f - juce::jlimit (0.0f, 1.0f, (mouseY - 198.0f - 4.0f) / (110.0f - 8.0f));
+    const float f = juce::jlimit (0.0f, 1.0f, fraction);
     auto s = proc.getSteps().steps[(std::size_t) stepIndex];
     switch (tabIndex)
     {
-        case 0:  s.note = (std::uint8_t) (fg::kNoteMin + roundedInt (f * (float) (fg::kNoteMax - fg::kNoteMin))); break;
+        case 0:  s.note = (std::uint8_t) fg::degreeToStored (roundedInt (f * (float) (fg::degreeCount (scaleIndex()) - 1)), scaleIndex()); break;
         case 1:  s.gate = (std::uint8_t) roundedInt (f * (float) fg::kGateMax); break;
         case 2:  s.slew = (std::uint8_t) roundedInt (f * (float) fg::kSlewMax); break;
         case 3:  s.ratchet = (std::uint8_t) (1 + roundedInt (f * (float) (fg::kRatchetMax - 1))); break;
         default: s.mod = (std::uint8_t) roundedInt (f * (float) fg::kModMax); break;
     }
     proc.setStep (stepIndex, s);
+    repaint();
+}
+
+void StepEditor::resetValue (int stepIndex, int tabIndex)
+{
+    if (stepIndex < 0 || stepIndex >= fg::kNumSteps || stepIndex >= length())
+        return;
+    auto st = proc.getSteps().steps[(std::size_t) stepIndex];
+    const fg::Step defaults;
+    switch (tabIndex)
+    {
+        case 0:  st.note = defaults.note; break;
+        case 1:  st.gate = defaults.gate; break;
+        case 2:  st.slew = defaults.slew; break;
+        case 3:  st.ratchet = defaults.ratchet; break;
+        default: st.mod = defaults.mod; break;
+    }
+    proc.setStep (stepIndex, st);
     repaint();
 }
 
@@ -421,10 +449,15 @@ void StepEditor::mouseDown (const juce::MouseEvent& e)
     for (int i = 0; i < 5; ++i)
         if (juce::Rectangle<int> (64 + i * 134, 100, 128, 32).contains (p)) { selectTab (i); return; }
     for (int pg = 0; pg < 8; ++pg)
-        if (juce::Rectangle<int> (106 + pg * 46, 142, 42, 24).contains (p)) { selectPage (pg); return; }
+        if (juce::Rectangle<int> (106 + pg * 46, 142, 42, 24).contains (p))
+        {
+            if (pg < activePages())             // a page that LENGTH does not reach cannot be chosen
+                selectPage (pg);
+            return;
+        }
     if (juce::Rectangle<int> (494, 142, 642, 24).contains (p))
     {
-        selectPage (juce::jlimit (0, 7, (int) ((float) (p.x - 494) / (642.0f / 64.0f) / 8.0f)));
+        selectPage (juce::jlimit (0, activePages() - 1, (int) ((float) (p.x - 494) / (642.0f / 64.0f) / 8.0f)));
         return;
     }
 
@@ -457,6 +490,26 @@ void StepEditor::mouseDrag (const juce::MouseEvent& e)
 {
     if (dragStep >= 0)
         dragValue (dragStep, tab(), (float) (e.getPosition().y + kY));
+}
+
+int StepEditor::stepUnder (juce::Point<int> p) const
+{
+    for (int c = 0; c < 8; ++c)
+    {
+        const int s = page() * 8 + c, x = 64 + c * 134;
+        if (s < length() && juce::Rectangle<int> (x, 198, 128, 110).contains (p))
+            return s;
+    }
+    return -1;
+}
+
+// A double click on a step's box puts that tab's value back to its default (the Mod tab in Shapes mode cycles shapes on a click, so it is left alone).
+void StepEditor::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    const int s = stepUnder (e.getPosition() + juce::Point<int> (kX, kY));
+    if (s < 0 || (tab() == 4 && modMode() == 0))
+        return;
+    resetValue (s, tab());
 }
 
 //==============================================================================
@@ -792,7 +845,6 @@ juce::String FractalGardenStyledPanel::headerLine2() const
 juce::String FractalGardenStyledPanel::headerCaption() const
 {
     const auto h = proc.getHostSnapshot();
-    const auto d = proc.getDiagnostics();
     juce::String position = "BAR -";
     if (h.ppqKnown)
     {
@@ -802,9 +854,7 @@ juce::String FractalGardenStyledPanel::headerCaption() const
         const int beat = (int) std::floor ((h.ppq - bars * barLength) / beatLength + 1e-9) + 1;
         position = "BAR " + juce::String ((int) bars + 1) + " BEAT " + juce::String (juce::jmin (beat, juce::jmax (1, h.sigNum)));
     }
-    // (The test part is temporary, for milestone 3: the lamp click sends one note while Logic is stopped.)
-    return position + "  |  LAMP = TEST NOTE  |  STOPPED BLOCKS " + juce::String (d.stoppedBlocks) + "  |  TEST NOTES " + juce::String (d.testNotesSent)
-           + "/" + juce::String (d.testRequests) + "  |  NO POSITION " + juce::String (d.noPositionBlocks);
+    return position;
 }
 
 void FractalGardenStyledPanel::setPreviewHeader (const juce::String& l1, const juce::String& l2, bool lit)
@@ -894,13 +944,6 @@ void FractalGardenStyledPanel::updateHeaderLights()
         lastLine1 = line1; lastLine2 = line2; lastCaption = caption;
         repaint (590, 10, 570, 80);             // only the header, not the whole window
     }
-}
-
-void FractalGardenStyledPanel::mouseDown (const juce::MouseEvent& e)
-{
-    // The STEP lamp (and the label next to it): asks for the temporary test note, which sounds only while Logic is stopped.
-    if (juce::Rectangle<int> (840, 18, 90, 30).contains (e.getPosition()))
-        proc.requestTestNote();
 }
 
 //==============================================================================
