@@ -13,6 +13,7 @@ Version 0.3.0 (milestone 3, the Logic proving ground; **built and checked withou
 - Temporary test aids: clicking the STEP lamp sends one short test note (C4, a quarter of a second) while Logic is stopped (dropped if not picked up within 1.5 s); counters for blocks handled while stopped, test notes asked / sent, and blocks with no song position. To be kept or removed after the Logic result.
 - Approximations (our own design, the manual is silent on DAW sync): RATE is a note length against Logic's tempo ("1 bar" follows the time signature); RATIO multiplies the speed; step 1 sits on bar 1 beat 1.
 - Checks: engine 834; clock 320,797; window and plugin test 219 (its "RESEED ALL turns it on" check no longer depends on the phase of the 20-a-second housekeeping timer).
+- GitHub run on commit b6c36c1: engine test (834 checks), clock test (320,797 checks), universal build (arm64 + x86_64), ad-hoc signing, auval (aumi Fgdn Pdot) succeeded, pluginval level 5 passed for AU and VST3, package and draft release all green.
 
 Version 0.2.0 (milestone 2, the first build with the styled panel; **tested in Logic on both Macs on 7 November 2026: every check passed, "nothing feels wrong at this stage"**). Nothing plays.
 
