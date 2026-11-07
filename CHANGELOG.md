@@ -12,6 +12,7 @@ Version 0.6.0 (milestones 6 and 7 merged: Branch, Path, Mutate, Micro Mutate, Re
 - Manual gaps: see the project file "Fractal-Garden manual gaps ledger" (G-64 onward; G-01 to G-04, G-07, G-14, G-16, G-18, G-33 now BUILT).
 - No new controls; all 46 ids unchanged.
 - Checks: engine 166,852; clock 1,002,437; window and plugin test 333.
+- GitHub run 7 November 2026 (draft release test-build-11): engine self-test passed; macOS build (AU + VST3, universal, auval, package) passed.
 
 Version 0.5.0 (milestone 5, gate length with ties, ratchet, slew, mod and resize; **tested in Logic on 7 November 2026: "all good", finished**).
 
