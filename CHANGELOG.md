@@ -10,6 +10,7 @@ Version 0.7.0 (milestone 8, Performance mode and ornamentation; automatic checks
 - Plugin: the three Performance knobs reach the player (they act whichever Knob Mode is showing); the read-outs name the zone, the fixed ratchet amount (x1 to x32), the fixed slew and the ornament group.
 - Manual gaps: see the project file "Fractal-Garden manual gaps ledger" (G-97 onward; G-05, G-14, G-20 and G-21 revised).
 - No new controls; all 46 ids unchanged.
+- GitHub run 42423864247 (7 November 2026): Engine self-test passed (18 s); macOS AU + VST3 build passed (5 min), installer zip and draft release test-build-14 made.
 - Checks: engine 179,652; clock 6,404,027; window and plugin test 338 (new: Performance knobs reach the player, stored steps unchanged, knobs back at 0 restore the notes); byte-for-byte comparison with 0.6.0 at knobs 0 (120 runs).
 
 Version 0.6.0 (milestones 6 and 7 merged: Branch, Path, Mutate, Micro Mutate, Reseed, Unmutate, TREE letters; **tested in Logic on 7 November 2026: "all looks good", finished**).
