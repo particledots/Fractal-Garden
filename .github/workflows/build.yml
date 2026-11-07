@@ -27,10 +27,12 @@ jobs:
           # Result is also written as annotations (shown on the run page and readable through the API).
           if [ $code -ne 0 ]; then
             echo "::error::ENGINE-TEST: failed (exit code $code)"
-            grep -E "error|FAIL|engine tests:" engine-test.log | head -15 | while IFS= read -r line; do echo "::error::ENGINE-TEST: $line"; done
+            grep -E "error|FAIL|engine tests:|clock tests:" engine-test.log | head -15 | while IFS= read -r line; do echo "::error::ENGINE-TEST: $line"; done
             exit 1
           fi
           echo "::notice::ENGINE-TEST: $(grep -h 'engine tests:' engine-test.log | head -n 1)"
+          echo "::notice::CLOCK-TEST: $(grep -h 'clock tests:' engine-test.log | head -n 1)"
+          grep -q "clock tests: .* checks passed" engine-test.log || { echo "::error::CLOCK-TEST: no pass line found"; exit 1; }
 
   build-macos:
     name: Build AU + VST3 (macOS)

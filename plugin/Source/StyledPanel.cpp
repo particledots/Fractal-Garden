@@ -694,8 +694,11 @@ FractalGardenStyledPanel::FractalGardenStyledPanel (FractalGardenProcessor& p, c
     for (const auto& id : chancePanel->controlledParameterIds())
         controlIds.push_back (id);
 
+    const auto view = proc.getPlayerView();
+    lastStepCount = view.stepCount;
+    lastNoteCount = view.noteCount;
     syncState();
-    startTimerHz (20);
+    startTimerHz (30);
 }
 
 FractalGardenStyledPanel::~FractalGardenStyledPanel()
@@ -716,7 +719,7 @@ void FractalGardenStyledPanel::addMomentary (const char* id, const juce::String&
     m->button.setClickingTogglesState (true);
     m->button.setBounds (bounds);
     auto* raw = m.get();
-    m->button.onClick = [raw] { raw->glow = 7; raw->button.getProperties().set ("glow", true); raw->button.repaint(); };
+    m->button.onClick = [raw] { raw->glow = 10; raw->button.getProperties().set ("glow", true); raw->button.repaint(); };
     m->attachment = std::make_unique<ButtonAttachment> (state, id, m->button);
     addAndMakeVisible (m->button);
     controlIds.push_back (id);
@@ -781,7 +784,27 @@ juce::String FractalGardenStyledPanel::headerLine2() const
 {
     if (previewHeader)
         return previewLine2;
-    return "STEP -/" + juce::String (intParam (fg::id::length)) + " PAGE " + juce::String (proc.getEditorPage() + 1) + " TRUNK";
+    const auto view = proc.getPlayerView();
+    return "STEP " + (view.running && view.step >= 0 ? juce::String (view.step + 1) : juce::String ("-")) + "/" + juce::String (intParam (fg::id::length))
+           + " PAGE " + juce::String (proc.getEditorPage() + 1) + " TRUNK";
+}
+
+juce::String FractalGardenStyledPanel::headerCaption() const
+{
+    const auto h = proc.getHostSnapshot();
+    const auto d = proc.getDiagnostics();
+    juce::String position = "BAR -";
+    if (h.ppqKnown)
+    {
+        const double barLength = 4.0 * (double) juce::jmax (1, h.sigNum) / (double) juce::jmax (1, h.sigDen);     // in quarter notes
+        const double beatLength = 4.0 / (double) juce::jmax (1, h.sigDen);
+        const double bars = std::floor (h.ppq / barLength);
+        const int beat = (int) std::floor ((h.ppq - bars * barLength) / beatLength + 1e-9) + 1;
+        position = "BAR " + juce::String ((int) bars + 1) + " BEAT " + juce::String (juce::jmin (beat, juce::jmax (1, h.sigNum)));
+    }
+    // (The test part is temporary, for milestone 3: the lamp click sends one note while Logic is stopped.)
+    return position + "  |  LAMP = TEST NOTE  |  STOPPED BLOCKS " + juce::String (d.stoppedBlocks) + "  |  TEST NOTES " + juce::String (d.testNotesSent)
+           + "/" + juce::String (d.testRequests) + "  |  NO POSITION " + juce::String (d.noPositionBlocks);
 }
 
 void FractalGardenStyledPanel::setPreviewHeader (const juce::String& l1, const juce::String& l2, bool lit)
@@ -828,6 +851,7 @@ void FractalGardenStyledPanel::timerCallback()
 
     syncState();
     stepEditor->refresh();
+    updateHeaderLights();
 
     // The parts the panel paints itself depend on these
     const auto h = proc.getHostSnapshot();
@@ -850,6 +874,35 @@ void FractalGardenStyledPanel::timerCallback()
     }
 }
 
+void FractalGardenStyledPanel::updateHeaderLights()
+{
+    // The window looks at the sequencer about 30 times a second, so a lamp is lit for a few looks after each step or note.
+    const auto view = proc.getPlayerView();
+    if (stepLampTicks > 0) --stepLampTicks;
+    if (gateLampTicks > 0) --gateLampTicks;
+    if (view.stepCount != lastStepCount) { lastStepCount = view.stepCount; stepLampTicks = 3; }
+    if (view.noteCount != lastNoteCount) { lastNoteCount = view.noteCount; gateLampTicks = 3; }
+    const bool newStepLit = view.running && stepLampTicks > 0;
+    const bool newGateLit = view.running && (view.gate || gateLampTicks > 0);
+
+    stepEditor->setPlayhead (view.running ? view.step : -1);
+
+    const auto line1 = headerLine1(), line2 = headerLine2(), caption = headerCaption();
+    if (newStepLit != stepLit || newGateLit != gateLit || line1 != lastLine1 || line2 != lastLine2 || caption != lastCaption)
+    {
+        stepLit = newStepLit; gateLit = newGateLit;
+        lastLine1 = line1; lastLine2 = line2; lastCaption = caption;
+        repaint (590, 10, 570, 80);             // only the header, not the whole window
+    }
+}
+
+void FractalGardenStyledPanel::mouseDown (const juce::MouseEvent& e)
+{
+    // The STEP lamp (and the label next to it): asks for the temporary test note, which sounds only while Logic is stopped.
+    if (juce::Rectangle<int> (840, 18, 90, 30).contains (e.getPosition()))
+        proc.requestTestNote();
+}
+
 //==============================================================================
 void FractalGardenStyledPanel::paint (juce::Graphics& g)
 {
@@ -867,10 +920,11 @@ void FractalGardenStyledPanel::paint (juce::Graphics& g)
     drawAt (g, headerLine2(), 616.0f, 56.0f, mono (14.0f), amber);
     drawAt (g, "STEP", 884.0f, 34.0f, mono (13.0f), muted, anchorEnd);
     drawAt (g, "GATE", 884.0f, 56.0f, mono (13.0f), muted, anchorEnd);
-    g.setColour (teal.withAlpha (previewLights ? 1.0f : 0.25f));
+    g.setColour (teal.withAlpha (stepLampLit() ? 1.0f : 0.25f));
     g.fillEllipse (902.0f, 28.0f, 12.0f, 12.0f);
-    g.setColour (amber.withAlpha (previewLights ? 1.0f : 0.25f));
+    g.setColour (amber.withAlpha (gateLampLit() ? 1.0f : 0.25f));
     g.fillEllipse (902.0f, 50.0f, 12.0f, 12.0f);
+    drawAt (g, headerCaption(), 1152.0f, 84.0f, mono (11.0f), muted, anchorEnd);
 
     // Knob Mode
     fillCard (g, { 712.0f, 392.0f, 440.0f, 62.0f });

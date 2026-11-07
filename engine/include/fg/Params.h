@@ -5,8 +5,9 @@
 // This file is the single source for the plugin: the wrapper builds its parameters from kParams, the panel and the plain-slider
 // window read the menu names from the tables below, and the engine self-test checks the whole list against the control list.
 //
-// Which milestone makes which control act is in the control list ("Works from"). In milestone 2 nothing acts; the controls move,
-// are saved with the Logic project, and the momentary ones switch themselves back off.
+// Which milestone makes which control act is in the control list ("Works from"). Since milestone 3 Length, Rate and Ratio act (they set
+// the loop and the speed of the trunk); the other controls move and are saved with the Logic project, and the momentary ones switch
+// themselves back off, until their milestone.
 
 #pragma once
 

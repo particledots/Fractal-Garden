@@ -1,11 +1,13 @@
 # The Fractal-Garden engine. Plain C++17, no JUCE, no plugin code.
 #   include/fg/Params.h   the 46 controls (ids, ranges, defaults, menu choices): the single source for the plugin
 #   include/fg/Steps.h    the 64 steps of data and how they are saved
-# The sequencer itself arrives in later milestones.
+#   include/fg/Clock.h    the sequencer clock and the trunk player (milestone 3): Logic's song position in, notes out
+# The rest of the sequencer arrives in later milestones.
 
 add_library(fg_engine STATIC
     src/Params.cpp
     src/Steps.cpp
+    src/Clock.cpp
 )
 
 target_include_directories(fg_engine PUBLIC include)
@@ -15,4 +17,8 @@ if(FG_BUILD_TESTS)
     add_executable(fg_engine_test tests/engine_test.cpp)
     target_link_libraries(fg_engine_test PRIVATE fg_engine)
     add_test(NAME engine COMMAND fg_engine_test)
+
+    add_executable(fg_clock_test tests/clock_test.cpp)
+    target_link_libraries(fg_clock_test PRIVATE fg_engine)
+    add_test(NAME clock COMMAND fg_clock_test)
 endif()

@@ -16,6 +16,7 @@
 #include "PanelLookAndFeel.h"
 #include "Parameters.h"
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -101,7 +102,7 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
 
     void refresh();                                  // repaints when the steps, tab, page, length or Mod Out mode changed
-    void setPlayhead (int step) { playhead = step; repaint(); }      // -1 = none (the sequencer comes in milestone 3); the preview tool uses it
+    void setPlayhead (int step) { if (step != playhead) { playhead = step; repaint(); } }      // the step Logic's playback is on, -1 = none (stopped)
 
     // For the automatic checks
     int tab() const;
@@ -160,6 +161,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;       // a click on the STEP lamp asks for the temporary test note
 
     // Called when the "Plain sliders" button is pressed; the editor swaps windows.
     std::function<void()> onSwitchToPlain;
@@ -177,6 +179,9 @@ public:
     bool chanceButtonShown() const { return chanceButton.isVisible(); }
     juce::String headerLine1() const;
     juce::String headerLine2() const;
+    juce::String headerCaption() const;                      // song position and the temporary test counters, under the header
+    bool stepLampLit() const { return previewLights || stepLit; }
+    bool gateLampLit() const { return previewLights || gateLit; }
     void setPreviewHeader (const juce::String& line1, const juce::String& line2, bool lightsOn);   // pictures only: fixed header text and lit lights
     void clearPreviewHeader();
     void setPreviewTree (int playingBranch) { previewTreePlay = playingBranch; repaint(); }
@@ -218,11 +223,17 @@ private:
     std::unique_ptr<SliderAttachment> rootAttachment;
     std::unique_ptr<ChanceMixPanel> chancePanel;
 
+    void updateHeaderLights();                  // follows Logic's playback: lamps, playhead, header text (repaints only the header)
+
     int shownMode = 0;
     int lastSignature = 0;
+    std::uint32_t lastStepCount = 0, lastNoteCount = 0;
+    int stepLampTicks = 0, gateLampTicks = 0;   // how much longer each lamp stays lit after a step / a note
+    bool stepLit = false, gateLit = false;
+    juce::String lastLine1, lastLine2, lastCaption;
     bool previewHeader = false, previewLights = false;
     juce::String previewLine1, previewLine2;
-    int previewTreePlay = -1;                   // -1 = nothing playing (the sequencer comes in milestone 3)
+    int previewTreePlay = -1;                   // -1 = nothing playing (branches come in milestone 6)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (FractalGardenStyledPanel)
 };

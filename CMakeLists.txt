@@ -8,7 +8,7 @@ if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 endif()
 
-project(FractalGarden VERSION 0.2.0 LANGUAGES C CXX)
+project(FractalGarden VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,7 +21,7 @@ if(FG_BUILD_TESTS)
     enable_testing()
 endif()
 
-# 1) The engine: plain C++, no plugin framework (the control list, the step data, later the sequencer itself).
+# 1) The engine: plain C++, no plugin framework (the control list, the step data, the sequencer clock; later the rest of the sequencer).
 add_subdirectory(engine)
 
 # 2) The plugin wrapper and the styled panel (JUCE).

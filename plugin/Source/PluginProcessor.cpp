@@ -6,6 +6,11 @@ FractalGardenProcessor::FractalGardenProcessor()
       apvts (*this, nullptr, "Parameters", FgParams::createLayout()),
       steps (fg::StepData::makeSample())
 {
+    rateParam   = apvts.getRawParameterValue (fg::id::stepRate);
+    ratioParam  = apvts.getRawParameterValue (fg::id::ratio);
+    lengthParam = apvts.getRawParameterValue (fg::id::length);
+    audioSteps = steps;
+    outBuffer.ensureSize (16384);
     saveStepsToState();
     startTimerHz (20);
 }
@@ -38,32 +43,147 @@ void FractalGardenProcessor::timerCallback()
 }
 
 //==============================================================================
-void FractalGardenProcessor::prepareToPlay (double, int) {}
+void FractalGardenProcessor::prepareToPlay (double newSampleRate, int)
+{
+    sampleRate.store (newSampleRate > 0.0 ? newSampleRate : 44100.0);
+    player.reset();
+    testNoteSounding = false;
+    testNoteSamplesLeft = 0;
+    panicPending.store (true);          // if Logic restarted its audio while a note sounded, the first block sends all-notes-off
+    outBuffer.ensureSize (16384);
+}
 
 bool FractalGardenProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     return layouts.getMainOutputChannelSet().isDisabled() && layouts.getMainInputChannelSet().isDisabled();
 }
 
-void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&)
+void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
+    const int numSamples = buffer.getNumSamples();
+    if (numSamples <= 0)
+        return;
 
-    // Only look at what Logic says about play state and tempo (shown in the header). The MIDI buffer is left exactly as it came in:
-    // this version adds no notes of its own.
-    if (auto* playHead = getPlayHead())
+    // 1. What Logic says: play state, tempo, time signature, song position (also shown in the window).
+    fg::HostBlock host;
+    if (auto* transport = getPlayHead())
     {
-        if (auto position = playHead->getPosition())
+        if (auto position = transport->getPosition())
         {
             hostKnown.store (true);
-            hostPlaying.store (position->getIsPlaying());
+            host.playing = position->getIsPlaying();
+            hostPlaying.store (host.playing);
             if (auto bpm = position->getBpm())
             {
+                host.bpm = *bpm;
                 hostBpm.store (*bpm);
                 hostTempoKnown.store (true);
             }
+            if (auto ppq = position->getPpqPosition())
+            {
+                host.ppq = *ppq;
+                host.havePpq = true;
+                hostPpq.store (*ppq);
+                hostPpqKnown.store (true);
+            }
+            if (auto signature = position->getTimeSignature())
+            {
+                host.sigNum = signature->numerator;
+                host.sigDen = signature->denominator;
+                hostSigNum.store (host.sigNum);
+                hostSigDen.store (host.sigDen);
+            }
         }
     }
+    if (! host.playing)
+        diagStopped.fetch_add (1);
+    else if (! host.havePpq)
+        diagNoPosition.fetch_add (1);
+
+    // 2. The audio thread's copy of the steps (taken only when they changed, and never waiting for the window thread).
+    const int revision = stepsRevision.load();
+    if (revision != audioStepsRevision)
+    {
+        const juce::ScopedTryLock tryLock (stepLock);
+        if (tryLock.isLocked())
+        {
+            audioSteps = steps;
+            audioStepsRevision = revision;
+        }
+    }
+
+    // 3. The clock decides which notes start and stop in this block.
+    fg::PlayerSettings settings;
+    settings.rate   = juce::jlimit (0, fg::kNumRates - 1,  juce::roundToInt (rateParam->load()));
+    settings.ratio  = juce::jlimit (0, fg::kNumRatios - 1, juce::roundToInt (ratioParam->load()));
+    settings.length = juce::jlimit (1, fg::kNumSteps,      juce::roundToInt (lengthParam->load()));
+    const int numEvents = player.process (sampleRate.load(), numSamples, host, settings, audioSteps, events, kMaxEvents);
+
+    // 4. Out: everything that arrived from Logic passes through unchanged, and the sequencer's notes are added at their sample positions.
+    const int lastSample = numSamples - 1;
+    outBuffer.clear();
+    for (const auto meta : midi)
+        outBuffer.addEvent (meta.getMessage(), juce::jlimit (0, lastSample, meta.samplePosition));
+
+    if (panicPending.exchange (false))
+        outBuffer.addEvent (juce::MidiMessage::allNotesOff (fg::kPlayerChannel), 0);
+
+    for (int i = 0; i < numEvents; ++i)
+    {
+        const auto& e = events[i];
+        outBuffer.addEvent (e.on ? juce::MidiMessage::noteOn (fg::kPlayerChannel, e.note, (juce::uint8) e.velocity)
+                                 : juce::MidiMessage::noteOff (fg::kPlayerChannel, e.note),
+                            juce::jlimit (0, lastSample, e.offset));
+    }
+
+    // 5. The temporary test note: only when Logic is stopped, and only if the click was made just now (a click that Logic never
+    //    delivered a block for must not sound seconds later, when Logic starts).
+    if (testRequested.exchange (false))
+    {
+        const juce::uint32 age = juce::Time::getMillisecondCounter() - testRequestedAtMs.load();
+        if (! host.playing && age < 1500)
+        {
+            if (testNoteSounding)
+                outBuffer.addEvent (juce::MidiMessage::noteOff (fg::kPlayerChannel, kTestNote), 0);
+            outBuffer.addEvent (juce::MidiMessage::noteOn (fg::kPlayerChannel, kTestNote, (juce::uint8) fg::kPlayerVelocity), 0);
+            testNoteSounding = true;
+            testNoteSamplesLeft = (long long) (sampleRate.load() * 0.25);
+            diagTestSent.fetch_add (1);
+        }
+    }
+    if (testNoteSounding)
+    {
+        if (testNoteSamplesLeft < numSamples)
+        {
+            outBuffer.addEvent (juce::MidiMessage::noteOff (fg::kPlayerChannel, kTestNote), (int) juce::jmax ((long long) 0, testNoteSamplesLeft));
+            testNoteSounding = false;
+        }
+        else
+            testNoteSamplesLeft -= numSamples;
+    }
+
+    midi.swapWith (outBuffer);
+}
+
+// Bypassed in Logic (if Logic calls a bypassed MIDI effect at all): MIDI from Logic keeps passing through, the plugin adds nothing,
+// and any note it has started is ended.
+void FractalGardenProcessor::processBlockBypassed (juce::AudioBuffer<float>&, juce::MidiBuffer& midi)
+{
+    releaseEverything (midi);
+}
+
+void FractalGardenProcessor::releaseEverything (juce::MidiBuffer& out)
+{
+    const int count = player.releaseHeld (events, kMaxEvents);
+    for (int i = 0; i < count; ++i)
+        out.addEvent (juce::MidiMessage::noteOff (fg::kPlayerChannel, events[i].note), 0);
+    if (testNoteSounding)
+    {
+        out.addEvent (juce::MidiMessage::noteOff (fg::kPlayerChannel, kTestNote), 0);
+        testNoteSounding = false;
+    }
+    testRequested.store (false);
 }
 
 FractalGardenProcessor::HostSnapshot FractalGardenProcessor::getHostSnapshot() const
@@ -73,7 +193,39 @@ FractalGardenProcessor::HostSnapshot FractalGardenProcessor::getHostSnapshot() c
     s.playing = hostPlaying.load();
     s.tempoKnown = hostTempoKnown.load();
     s.bpm = hostBpm.load();
+    s.ppqKnown = hostPpqKnown.load();
+    s.ppq = hostPpq.load();
+    s.sigNum = hostSigNum.load();
+    s.sigDen = hostSigDen.load();
     return s;
+}
+
+FractalGardenProcessor::PlayerView FractalGardenProcessor::getPlayerView() const
+{
+    PlayerView v;
+    v.running = player.running();
+    v.step = player.currentStep();
+    v.gate = player.gateOpen();
+    v.stepCount = player.stepCount();
+    v.noteCount = player.noteCount();
+    return v;
+}
+
+void FractalGardenProcessor::requestTestNote()
+{
+    diagTestRequests.fetch_add (1);
+    testRequestedAtMs.store (juce::Time::getMillisecondCounter());
+    testRequested.store (true);
+}
+
+FractalGardenProcessor::Diagnostics FractalGardenProcessor::getDiagnostics() const
+{
+    Diagnostics d;
+    d.stoppedBlocks = diagStopped.load();
+    d.noPositionBlocks = diagNoPosition.load();
+    d.testRequests = diagTestRequests.load();
+    d.testNotesSent = diagTestSent.load();
+    return d;
 }
 
 //==============================================================================
