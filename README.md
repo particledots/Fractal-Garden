@@ -4,7 +4,7 @@ An original AU / VST3 **MIDI effect** for Logic Pro, inspired by the feel of a E
 sequencer (the Qu-Bit Electronix Bloom v2): 64 steps, branches that grow from a trunk, and knobs that mutate the pattern. All code is
 our own; it is not a port or copy of anything, and it is not affiliated with Qu-Bit Electronix.
 
-**Status: version 0.5.0 (milestone 5: gate length with ties, ratchet, slew, mod and resize). Built and checked by the automatic tests; NOT YET TESTED IN LOGIC.** Milestone 4 (0.4.0) was tested in Logic on 7 November 2026: everything worked as expected and as described, and it is finished.
+**Status: version 0.5.0 (milestone 5: gate length with ties, ratchet, slew, mod and resize). Tested in Logic on 7 November 2026: Bryn reported "all good", and it is finished.** Milestone 4 (0.4.0) was tested in Logic on 7 November 2026: everything worked as expected and as described, and it is finished.
 **The trunk now plays with gate lengths and ties, ratchets, slew and the Mod output.** Gate Length (5 % to 100 %; 100 % ties to the next step), Ratchet (x1 x2 x3 x4 x6 x8 x16 x32), Slew (sent as MIDI CC 84), Mod (four modes, sent as CC 1, at most 100 CC messages a second) and the Resize buttons (SHRINK / EXPAND) work. Branches, Path and Mutate still only move and are saved; they start working in later milestones.
 
 ## First five minutes (after installing, see *Getting the plugin*)
@@ -54,7 +54,7 @@ The step editor (tabs, Mod Out chips, page chips, an overview of all 64 steps, e
 
 ## What has been checked
 
-- Version 0.5.0 automatic checks: engine 2,111; clock 1,002,337 (ties, every ratchet amount at several block sizes, CC 84 and CC 1 values and order, all four Mod modes, the 100 a second cap, identical output for block sizes 1 to 8192, stop / start). The GitHub run result is in the CHANGELOG. Not yet tested in Logic.
+- Version 0.5.0 automatic checks: engine 2,111; clock 1,002,337 (ties, every ratchet amount at several block sizes, CC 84 and CC 1 values and order, all four Mod modes, the 100 a second cap, identical output for block sizes 1 to 8192, stop / start). The GitHub run result is in the CHANGELOG. Tested in Logic on 7 November 2026: all good (reported as "all good" without a per-item list).
 - Earlier (0.4.0): engine self-test: 1,214 checks (control table, menus, the 28 scales and pitch, step data save / load, reading old 0.2.0 / 0.3.0 data, rotate, transpose, all eleven orders: shapes, repeat, determinism and seeds).
 - Clock self-test: 575,208 checks. Everything from 0.3.0 (all RATEs and RATIOs, block sizes 1 to 8192, 44.1 to 96 kHz, tempos, count-in, stop / start, relocate, cycle, time signatures, two instances) plus every order across several block sizes, the shown step in every order, SCALE / KEY / ROOT, and RESET (once, twice, from the start, while stopped, after a jump, after stop and start), and two instances in every order staying in step.
 - Window and plugin test on a Linux computer: 246 checks (the milestone 3 checks, adapted, plus: no test aids left; SCALE / KEY / ROOT re-pitch the notes without changing steps; Reverse, Converge, Pendulum and Chance mix in the playing plugin; ROTATE and TRANSPOSE both ways, once per press; RESET; loading a project does not press buttons; the order seed is saved and old projects get one; page chips follow LENGTH; step editing by degree, double-click reset, no editing beyond LENGTH).

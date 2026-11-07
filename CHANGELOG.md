@@ -3,7 +3,7 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
-Version 0.5.0 (milestone 5, gate length with ties, ratchet, slew, mod and resize; **not yet tested in Logic**).
+Version 0.5.0 (milestone 5, gate length with ties, ratchet, slew, mod and resize; **tested in Logic on 7 November 2026: "all good", finished**).
 
 - New `fg/Mod.h` / `Mod.cpp`: CC numbers (Mod 1, Slew 84), the eight Mod shapes, the sixteen Mod rates (one-shot, ratchet, halves, quarters, two fixed levels), Envelope and Smooth curves, 0..1 to 0..127.
 - Trunk player: ties at gate 100 % (new note first, old note-off at the same sample right after; same pitch = no new note; tie into OFF ends at that step's start; ratcheted steps never tie); ratchet amounts x1 x2 x3 x4 x6 x8 x16 x32 with notes of half a slot (at least 1 ms); CC 84 before the note when the value changes, with legato hold when the next step has slew; CC 1 per Mod mode, moving values on a 10 ms grid, only changes sent; at most 100 CC messages in any one second; everything identical for any block size.
