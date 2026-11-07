@@ -120,6 +120,12 @@ namespace fg
                               StepData& data, const StepData& branchSource, NoteEvent* out, int maxOut)
     {
         int n = 0;
+        if (settings.slewCc != seenSlewCc || settings.modCc != seenModCc)
+        {
+            seenSlewCc = settings.slewCc;                 // new CC numbers (settings page): send the current values again on the new numbers
+            seenModCc = settings.modCc;
+            lastCc1 = lastCc84 = -1;
+        }
         const int lastSample = numSamples > 0 ? numSamples - 1 : 0;
         const long long blockStartAbs = sampleClock;
         if (numSamples > 0)
@@ -426,14 +432,14 @@ namespace fg
                         const int slewValue = std::clamp ((int) std::lround ((double) step.slew * 127.0 / (double) kSlewMax), 0, 127);
                         if (slewValue != lastCc84 && allowCc (boundaryAbs))
                         {
-                            emitCc (offset, kSlewCc, slewValue);
+                            emitCc (offset, settings.slewCc, slewValue);
                             lastCc84 = slewValue;
                         }
                     }
                     const int modValue = modToCc (modLevel (settings, 0.0));
                     if (modValue != lastCc1 && allowCc (boundaryAbs))
                     {
-                        emitCc (offset, kModCc, modValue);
+                        emitCc (offset, settings.modCc, modValue);
                         lastCc1 = modValue;
                     }
                     nextTickAbs = boundaryAbs + tickSamples;
@@ -441,7 +447,7 @@ namespace fg
 
                 if (plays)
                 {
-                    const int note = pitchFor (step.note, settings.scale, settings.key, settings.root);
+                    const int note = pitchFor (step.note, settings.scale, settings.key, settings.root, settings.baseNote);
                     int velocity = kPlayerVelocity;
                     if (settings.modMode == 1)
                         velocity = std::clamp ((int) std::lround ((double) step.mod * 127.0 / (double) kModMax), 1, 127);
@@ -460,7 +466,7 @@ namespace fg
                         ornVelocity = velocity;
                         for (int i = 0; i < ornamentCount; ++i)
                             ornNotes[i] = ornamentDegrees[i] == kOrnRest ? -1
-                                        : pitchFor (degreeToStored (ornamentDegrees[i], perfScale), settings.scale, settings.key, settings.root);
+                                        : pitchFor (degreeToStored (ornamentDegrees[i], perfScale), settings.scale, settings.key, settings.root, settings.baseNote);
                         swallowLeft = ornamentSteps (ornamentKind) - 1;
                         if (ornNotes[0] >= 0)
                         {
@@ -554,7 +560,7 @@ namespace fg
                 const int modValue = modToCc (modLevel (settings, t));
                 if (modValue != lastCc1 && allowCc (tickAbs))
                 {
-                    emitCc (offset, kModCc, modValue);
+                    emitCc (offset, settings.modCc, modValue);
                     lastCc1 = modValue;
                 }
                 nextTickAbs = tickAbs + tickSamples;

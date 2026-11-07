@@ -90,7 +90,12 @@ namespace fg
     // are kept. Nothing happens at length 1. Steps past the new length are left as they were.
     bool resizeShrink (StepData&, int& length);
 
+    // The three ways Resize can expand (the manual's Resize Algorithm setting; the settings page's RESIZE METHOD). Spread is the default.
+    enum class ResizeMethod { Spread = 0, Stretch = 1, Clone = 2 };
+
     // Expand ("Spread", the manual's default): the new length is twice the old one. The old step i moves to step 2i, and the step after it
     // (2i+1) becomes a copy of it that is switched OFF, so the gaps are empty. Nothing happens if twice the length would pass 64.
-    bool resizeExpand (StepData&, int& length);
+    // Stretch: the old step i moves to 2i and 2i+1 is an exact copy of it (the gap is filled with a repeat of the step).
+    // Clone: the whole old sequence is repeated once after itself (new step L+i is a copy of step i).
+    bool resizeExpand (StepData&, int& length, ResizeMethod method = ResizeMethod::Spread);
 }

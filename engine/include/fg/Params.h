@@ -1,6 +1,6 @@
-// The list of controls Logic can see and automate: 46 ids, exactly as in "Fractal-Garden control list (milestone 1, approved
-// 7 Nov 2026)". Once a build with these ids ships, an id is NEVER renamed or removed, a menu's choices keep their order,
-// and new controls are only appended at the end of kParams.
+// The list of controls Logic can see and automate: the 46 ids of "Fractal-Garden control list (milestone 1, approved 7 Nov 2026)",
+// then the 19 settings-page controls appended in milestone 9 (65 in all). Once a build with these ids ships, an id is NEVER renamed
+// or removed, a menu's choices keep their order, and new controls are only appended at the end of kParams.
 //
 // This file is the single source for the plugin: the wrapper builds its parameters from kParams, the panel and the plain-slider
 // window read the menu names from the tables below, and the engine self-test checks the whole list against the control list.
@@ -18,7 +18,8 @@ namespace fg
     inline constexpr int kNumSteps     = 64;
     inline constexpr int kStepsPerPage = 8;
     inline constexpr int kNumPages     = 8;
-    inline constexpr int kNumParameters = 46;
+    inline constexpr int kNumParameters = 65;
+    inline constexpr int kNumOriginalParameters = 46;       // the control list of milestone 1; the 19 after them are the settings page
 
     // ---- the ids (these strings are what Logic stores in projects and automation) ----
     namespace id
@@ -69,6 +70,26 @@ namespace fg
         inline constexpr const char* chanceDrunk    = "chanceDrunk";
         inline constexpr const char* chanceRunMin   = "chanceRunMin";
         inline constexpr const char* chanceRunMax   = "chanceRunMax";
+        // ---- appended in milestone 9: the settings page ----
+        inline constexpr const char* midiChannel    = "midiChannel";
+        inline constexpr const char* ccSlew         = "ccSlew";
+        inline constexpr const char* ccMod          = "ccMod";
+        inline constexpr const char* baseNote       = "baseNote";
+        inline constexpr const char* resizeMethod   = "resizeMethod";
+        inline constexpr const char* reseedFilterNote    = "reseedFilterNote";
+        inline constexpr const char* reseedFilterGate    = "reseedFilterGate";
+        inline constexpr const char* reseedFilterSlew    = "reseedFilterSlew";
+        inline constexpr const char* reseedFilterRatchet = "reseedFilterRatchet";
+        inline constexpr const char* reseedFilterMod     = "reseedFilterMod";
+        inline constexpr const char* regenNote      = "regenNote";
+        inline constexpr const char* regenGate      = "regenGate";
+        inline constexpr const char* regenSlew      = "regenSlew";
+        inline constexpr const char* regenRatchet   = "regenRatchet";
+        inline constexpr const char* regenStepOnOff = "regenStepOnOff";
+        inline constexpr const char* regenLength    = "regenLength";
+        inline constexpr const char* regenResize    = "regenResize";
+        inline constexpr const char* regenRotate    = "regenRotate";
+        inline constexpr const char* regenTranspose = "regenTranspose";
     }
 
     // ---- the menus (the ORDER of each list is frozen) ----
@@ -118,7 +139,18 @@ namespace fg
         "Slot 1", "Slot 2", "Slot 3", "Slot 4", "Slot 5", "Slot 6", "Slot 7", "Slot 8",
         "Slot 9", "Slot 10", "Slot 11", "Slot 12", "Slot 13", "Slot 14", "Slot 15", "Slot 16" };
 
-    // ---- the 46 controls, in the order of the control list ----
+    // The three Resize methods of the settings page (the order is frozen; Spread is the default and the behaviour of 0.7.0).
+    inline constexpr const char* kResizeMethodChoiceNames[] = { "Spread", "Stretch", "Clone" };
+    inline constexpr int kNumResizeMethodChoices = 3;
+
+    // Settings-page limits and defaults (the manual's Narwhal defaults: channel 1, Slew CC 84, Mod CC 1, root note offset 48).
+    inline constexpr int kDefaultMidiChannel = 1;
+    inline constexpr int kDefaultSlewCc = 84;
+    inline constexpr int kDefaultModCc = 1;
+    inline constexpr int kDefaultBaseNote = 48;      // C2 in Logic's naming (60 = C3)
+    inline constexpr int kMaxBaseNote = 96;
+
+    // ---- the 65 controls: the 46 of the control list, then the 19 of the settings page ----
     enum class Kind { Knob, Int, Choice, Toggle, Momentary };
 
     struct ParamSpec
@@ -182,6 +214,26 @@ namespace fg
         { id::chanceDrunk,    "Chance Mix Drunk",        Kind::Int,       0, 100, 0,   nullptr, 0 },
         { id::chanceRunMin,   "Chance Mix Shortest Run", Kind::Int,       1, 32,  4,   nullptr, 0 },
         { id::chanceRunMax,   "Chance Mix Longest Run",  Kind::Int,       1, 32,  16,  nullptr, 0 },
+        // ---- appended in milestone 9: the settings page (the defaults give exactly the behaviour of 0.7.0) ----
+        { id::midiChannel,    "MIDI Channel",            Kind::Int,       1, 16,  kDefaultMidiChannel, nullptr, 0 },
+        { id::ccSlew,         "Slew CC Number",          Kind::Int,       0, 127, kDefaultSlewCc, nullptr, 0 },
+        { id::ccMod,          "Mod CC Number",           Kind::Int,       0, 127, kDefaultModCc, nullptr, 0 },
+        { id::baseNote,       "Base Note",               Kind::Int,       0, kMaxBaseNote, kDefaultBaseNote, nullptr, 0 },
+        { id::resizeMethod,   "Resize Method",           Kind::Choice,    0, kNumResizeMethodChoices - 1, 0, kResizeMethodChoiceNames, kNumResizeMethodChoices },
+        { id::reseedFilterNote,    "Reseed All Includes Note",    Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::reseedFilterGate,    "Reseed All Includes Gate",    Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::reseedFilterSlew,    "Reseed All Includes Slew",    Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::reseedFilterRatchet, "Reseed All Includes Ratchet", Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::reseedFilterMod,     "Reseed All Includes Mod",     Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::regenNote,      "Branches Follow Note Edits",      Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::regenGate,      "Branches Follow Gate Edits",      Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::regenSlew,      "Branches Follow Slew Edits",      Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::regenRatchet,   "Branches Follow Ratchet Edits",   Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::regenStepOnOff, "Branches Follow Step On/Off",     Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::regenLength,    "Branches Follow Length Edits",    Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::regenResize,    "Branches Follow Resize",          Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::regenRotate,    "Branches Follow Rotate",          Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        { id::regenTranspose, "Branches Follow Transpose",       Kind::Toggle, 0, 1, 1, nullptr, 0 },
     };
 
     // The spec for an id, or nullptr if there is no such control.

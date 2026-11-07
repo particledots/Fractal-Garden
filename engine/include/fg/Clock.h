@@ -106,6 +106,11 @@ namespace fg
         double perfRatchet = 0.0;        // Performance mode (milestone 8): temporary effects, they never change the stored steps
         double perfSlew = 0.0;
         double perfMutate = 0.0;
+
+        // The settings page (milestone 9). The defaults are the values of 0.7.0.
+        int slewCc = kSlewCc;            // MIDI CC number of the slew amount (0 to 127)
+        int modCc = kModCc;              // MIDI CC number of the Mod output (0 to 127)
+        int baseNote = kBaseMidiNote;    // MIDI note of the lowest place at Key C, Root 0
     };
 
     // A change the player made to a trunk step (Mutate or Micro Mutate): the wrapper writes it into the saved steps.
@@ -200,6 +205,7 @@ namespace fg
 
         // CC output
         int lastCc1 = -1, lastCc84 = -1;     // the last values sent (-1: send the next one whatever it is)
+        int seenSlewCc = kSlewCc, seenModCc = kModCc;   // the CC numbers of the last block (a change makes the next values go out whatever they are)
         long long sampleClock = 0;           // samples handled so far (this is what the 10 ms grid and the 100 per second cap count in)
         long long nextTickAbs = 0;           // the next 10 ms tick
         long long ccRing[kMaxCcPerSecond] = {};

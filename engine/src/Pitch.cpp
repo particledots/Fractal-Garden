@@ -106,13 +106,13 @@ int degreeToStored (int degree, int scale)
     return (d / n) * kDegreeSlots + d % n;
 }
 
-int pitchFor (int stored, int scale, int key, int root)
+int pitchFor (int stored, int scale, int key, int root, int baseNote)
 {
     const int n = scaleSize (scale);
     const int running = storedToDegree (stored, scale) + root;
     const int octave = floorDiv (running, n);
     const int degree = floorMod (running, n);
-    const int midi = kBaseMidiNote + std::clamp (key, 0, 11) + 12 * octave + scaleInterval (scale, degree);
+    const int midi = baseNote + std::clamp (key, 0, 11) + 12 * octave + scaleInterval (scale, degree);
     return std::clamp (midi, 0, 127);
 }
 

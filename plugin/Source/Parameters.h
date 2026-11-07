@@ -11,7 +11,7 @@ namespace FgParams
 {
     juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
 
-    // The ids of the 17 momentary buttons (they act, then switch themselves back off).
+    // The ids of the momentary buttons (they act, then switch themselves back off).
     const std::vector<const char*>& momentaryIds();
 
     // Names of the things saved next to the controls in the plugin state (not automatable).
@@ -23,5 +23,6 @@ namespace FgParams
     inline constexpr const char* kUndoStepsProperty    = "undoSteps";      // the steps as they were after the last manual edit (what UNMUTATE goes back to)
     inline constexpr const char* kUndoLengthProperty   = "undoLength";     // LENGTH at that moment
     inline constexpr const char* kBranchSourceProperty = "branchSource";   // the trunk snapshot the branches are made from (taken at the last edit)
+    inline constexpr const char* kPatternBankProperty  = "patternBank";    // the 16 pattern slots (milestone 9), as text
     inline constexpr const char* kBranchSeedProperty   = "branchSeed";     // which branches a path gives; RESEED: BRANCHES draws a new one
 }

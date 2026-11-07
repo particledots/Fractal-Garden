@@ -1,5 +1,5 @@
 # The Fractal-Garden engine. Plain C++17, no JUCE, no plugin code.
-#   include/fg/Params.h   the 46 controls (ids, ranges, defaults, menu choices): the single source for the plugin
+#   include/fg/Params.h   the 65 controls (46 of the control list + 19 settings): ids, ranges, defaults, menu choices: the single source for the plugin
 #   include/fg/Steps.h    the 64 steps of data and how they are saved
 #   include/fg/Pitch.h    the 28 scales and the pitch a stored note plays for Scale, Key and Root (milestone 4)
 #   include/fg/Orders.h   the 11 play orders (milestone 4)
@@ -7,6 +7,7 @@
 #   include/fg/Mutate.h   Mutate, Micro Mutate and Reseed: the random changes to steps (milestones 6 and 7)
 #   include/fg/Branch.h   branches and Path (milestone 6)
 #   include/fg/Perform.h  Performance mode: Ratchet FX, Slew FX, Mutate FX and the ornaments (milestone 8)
+#   include/fg/Patterns.h the 16-slot pattern bank (milestone 9)
 #   include/fg/Clock.h    the sequencer clock and the trunk player (milestone 3): Logic's song position in, notes out
 # The rest of the sequencer arrives in later milestones.
 
@@ -19,6 +20,7 @@ add_library(fg_engine STATIC
     src/Mutate.cpp
     src/Branch.cpp
     src/Perform.cpp
+    src/Patterns.cpp
     src/Clock.cpp
 )
 

@@ -1,4 +1,4 @@
-// Engine self-test (milestones 2 and 4): checks the 46 controls against the approved control list, written out here a second time
+// Engine self-test (milestones 2 and 4): checks the 65 controls (the 46 of the control list, then the 19 of the settings page) against the approved control list, written out here a second time
 // (id, kind, range, default) so a slip in Params.h is caught, then the menus, the step data and its saved form, and (milestone 4) the
 // 28 scales, the pitch a stored note plays, the 11 play orders, Rotate and Transpose, and (milestone 5) the ratchet list, the sixteen Mod
 // rates, the four Mod modes' curves, Resize and the conversion of older saved projects, and (milestones 6 and 7) Default Mutate's two
@@ -10,6 +10,7 @@
 #include <fg/Mutate.h>
 #include <fg/Orders.h>
 #include <fg/Params.h>
+#include <fg/Patterns.h>
 #include <fg/Perform.h>
 #include <fg/Pitch.h>
 #include <fg/Steps.h>
@@ -27,7 +28,7 @@ static int checks = 0, failures = 0;
 
 struct Expect { const char* id; char kind; int lo, hi, def; };      // kind: K knob, I whole number, C menu, T toggle, M momentary
 
-static const Expect kExpected[46] = {
+static const Expect kExpected[65] = {
     { "branch", 'K', 0, 1, 0 }, { "path", 'K', 0, 1, 0 }, { "mutate", 'K', 0, 1, 0 },
     { "microRatchet", 'K', 0, 1, 0 }, { "microSlew", 'K', 0, 1, 0 }, { "microMod", 'K', 0, 1, 0 },
     { "perfRatchet", 'K', 0, 1, 0 }, { "perfSlew", 'K', 0, 1, 0 }, { "perfMutate", 'K', 0, 1, 0 },
@@ -46,6 +47,14 @@ static const Expect kExpected[46] = {
     { "chanceForward", 'I', 0, 100, 100 }, { "chanceBackward", 'I', 0, 100, 60 }, { "chancePendulum", 'I', 0, 100, 40 },
     { "chancePingPong", 'I', 0, 100, 0 }, { "chanceRandom", 'I', 0, 100, 20 }, { "chanceDrunk", 'I', 0, 100, 0 },
     { "chanceRunMin", 'I', 1, 32, 4 }, { "chanceRunMax", 'I', 1, 32, 16 },
+    // appended in milestone 9: the settings page
+    { "midiChannel", 'I', 1, 16, 1 }, { "ccSlew", 'I', 0, 127, 84 }, { "ccMod", 'I', 0, 127, 1 }, { "baseNote", 'I', 0, 96, 48 },
+    { "resizeMethod", 'C', 0, 2, 0 },
+    { "reseedFilterNote", 'T', 0, 1, 1 }, { "reseedFilterGate", 'T', 0, 1, 1 }, { "reseedFilterSlew", 'T', 0, 1, 1 },
+    { "reseedFilterRatchet", 'T', 0, 1, 1 }, { "reseedFilterMod", 'T', 0, 1, 1 },
+    { "regenNote", 'T', 0, 1, 1 }, { "regenGate", 'T', 0, 1, 1 }, { "regenSlew", 'T', 0, 1, 1 }, { "regenRatchet", 'T', 0, 1, 1 },
+    { "regenStepOnOff", 'T', 0, 1, 1 }, { "regenLength", 'T', 0, 1, 1 }, { "regenResize", 'T', 0, 1, 1 }, { "regenRotate", 'T', 0, 1, 1 },
+    { "regenTranspose", 'T', 0, 1, 1 },
 };
 
 static fg::Kind kindOf (char c)
@@ -56,11 +65,11 @@ static fg::Kind kindOf (char c)
 
 int main()
 {
-    // ---- the 46 controls ----
-    CHECK (fg::kNumParameters == 46);
+    // ---- the 65 controls ----
+    CHECK (fg::kNumParameters == 65 && fg::kNumOriginalParameters == 46);
     std::set<std::string> seen;
     int momentary = 0;
-    for (int i = 0; i < 46; ++i)
+    for (int i = 0; i < 65; ++i)
     {
         const auto& p = fg::kParams[i];
         const auto& e = kExpected[i];
@@ -1153,6 +1162,119 @@ int main()
             // Fifth Up in a five-note scale: the degree nearest to seven semitones above (Major Pentatonic: C D E G A, G is 7 above C)
             CHECK (fg::ornamentPlan (fg::kOrnFifthUp, 0, 5, 3, 16, o) == 2 && o[1] == 3);
         }
+    }
+
+
+    // ---- milestone 9: the pattern bank, Resize methods, the Reseed filter, the base note ----
+    {
+        // the 46 ids of the control list are still the first 46, in the same order (frozen once shipped)
+        static const char* const first46[46] = {
+            "branch", "path", "mutate", "microRatchet", "microSlew", "microMod", "perfRatchet", "perfSlew", "perfMutate", "root", "knobMode", "length",
+            "scale", "key", "order", "stepRate", "ratio", "modMode", "patternSlot", "reseedScope", "reset", "unmutate", "reseedAll", "reseedBranches",
+            "reseedNote", "reseedGate", "reseedSlew", "reseedRatchet", "reseedMod", "resizeShrink", "resizeExpand", "rotateLeft", "rotateRight",
+            "transposeDown", "transposeUp", "patternLoad", "patternSave", "pendRepeat", "chanceForward", "chanceBackward", "chancePendulum",
+            "chancePingPong", "chanceRandom", "chanceDrunk", "chanceRunMin", "chanceRunMax" };
+        for (int i = 0; i < 46; ++i) CHECK (std::strcmp (fg::kParams[i].id, first46[i]) == 0);
+        CHECK (std::strcmp (fg::kParams[46].id, "midiChannel") == 0 && std::strcmp (fg::kParams[64].id, "regenTranspose") == 0);
+        CHECK (fg::kDefaultSlewCc == fg::kSlewCc && fg::kDefaultModCc == fg::kModCc && fg::kDefaultBaseNote == fg::kBaseMidiNote && fg::kDefaultMidiChannel == 1);
+
+        // pattern bank: slots start empty; save, load, overwrite; an empty slot loads nothing
+        fg::PatternBank bank;
+        CHECK (bank.usedCount() == 0);
+        for (int i = 0; i < 16; ++i) CHECK (! bank.isUsed (i));
+        CHECK (! bank.isUsed (-1) && ! bank.isUsed (16));
+        fg::StepData a = fg::StepData::makeSample();
+        fg::StepData b = a;
+        b.steps[3].note = 41; b.steps[3].on = ! b.steps[3].on; b.steps[63].mod = 77; b.steps[63].modShape = 5; b.steps[63].modRate = 11;
+        CHECK (bank.save (2, a, 8));
+        CHECK (bank.save (15, b, 64));
+        CHECK (! bank.save (16, a, 8) && ! bank.save (-1, a, 8));
+        CHECK (bank.usedCount() == 2 && bank.isUsed (2) && bank.isUsed (15) && ! bank.isUsed (3));
+        fg::StepData out; int len = 0;
+        CHECK (! bank.load (3, out, len) && len == 0);
+        CHECK (bank.load (2, out, len) && out == a && len == 8);
+        CHECK (bank.load (15, out, len) && out == b && len == 64);
+        CHECK (bank.save (2, b, 5) && bank.load (2, out, len) && out == b && len == 5);      // a full slot is overwritten
+        CHECK (bank.save (0, a, 0) && bank.slots[0].length == 1);                            // LENGTH is kept in 1 to 64
+        CHECK (bank.save (1, a, 99) && bank.slots[1].length == 64);
+
+        // saved form: round trip, and damaged data is refused without changing anything
+        const auto bytes = bank.toBytes();
+        fg::PatternBank back;
+        CHECK (back.fromBytes (bytes.data(), bytes.size()) && back == bank);
+        fg::PatternBank untouched = back;
+        CHECK (! untouched.fromBytes (bytes.data(), bytes.size() - 1) && untouched == back);
+        auto bad = bytes; bad[0] = 9;
+        CHECK (! untouched.fromBytes (bad.data(), bad.size()) && untouched == back);
+        bad = bytes; bad.push_back (0);
+        CHECK (! untouched.fromBytes (bad.data(), bad.size()) && untouched == back);
+        CHECK (! untouched.fromBytes (nullptr, 0) && untouched == back);
+        fg::PatternBank empty, emptyBack;
+        const auto emptyBytes = empty.toBytes();
+        CHECK (emptyBytes.size() == 17 && emptyBack.fromBytes (emptyBytes.data(), emptyBytes.size()) && emptyBack.usedCount() == 0);
+
+        // Resize methods
+        {
+            fg::StepData d = fg::StepData::makeSample();
+            for (int i = 0; i < 8; ++i) { d.steps[(std::size_t) i].note = (std::uint8_t) (i * 3); d.steps[(std::size_t) i].on = (i % 3) != 0; }
+            const fg::StepData before = d;
+            fg::StepData sp = before, st = before, cl = before;
+            int ls = 8, lt = 8, lc = 8;
+            CHECK (fg::resizeExpand (sp, ls) && ls == 16);                                              // the default is Spread
+            fg::StepData sp2 = before; int ls2 = 8;
+            CHECK (fg::resizeExpand (sp2, ls2, fg::ResizeMethod::Spread) && ls2 == 16 && sp2 == sp);
+            CHECK (fg::resizeExpand (st, lt, fg::ResizeMethod::Stretch) && lt == 16);
+            CHECK (fg::resizeExpand (cl, lc, fg::ResizeMethod::Clone) && lc == 16);
+            for (int i = 0; i < 8; ++i)
+            {
+                CHECK (st.steps[(std::size_t) (2 * i)] == before.steps[(std::size_t) i]);               // Stretch: step, then an exact copy of it
+                CHECK (st.steps[(std::size_t) (2 * i + 1)] == before.steps[(std::size_t) i]);
+                CHECK (cl.steps[(std::size_t) i] == before.steps[(std::size_t) i]);                     // Clone: the whole pattern twice
+                CHECK (cl.steps[(std::size_t) (8 + i)] == before.steps[(std::size_t) i]);
+                CHECK (sp.steps[(std::size_t) (2 * i)] == before.steps[(std::size_t) i] && ! sp.steps[(std::size_t) (2 * i + 1)].on);
+            }
+            for (auto method : { fg::ResizeMethod::Spread, fg::ResizeMethod::Stretch, fg::ResizeMethod::Clone })
+            {
+                fg::StepData big = before; int lb = 33;
+                CHECK (! fg::resizeExpand (big, lb, method) && lb == 33 && big == before);              // nothing past 64
+                lb = 32; CHECK (fg::resizeExpand (big, lb, method) && lb == 64);
+            }
+        }
+
+        // Reseed filter: with all five parts included RESEED ALL is exactly what it was; with some left out they are not touched
+        {
+            fg::StepData base = fg::StepData::makeSample();
+            fg::StepData x = base, y = base;
+            fg::Rng r1 (7), r2 (7);
+            fg::reseedSteps (x, 0, 64, fg::ReseedKind::All, 0, r1);
+            fg::reseedSteps (y, 0, 64, fg::ReseedKind::All, 0, r2, fg::kReseedAllMask);
+            CHECK (x == y && ! (x == base));
+            fg::StepData z = base;
+            fg::Rng r3 (7);
+            fg::reseedSteps (z, 0, 64, fg::ReseedKind::All, 0, r3, 1u);                                 // Note only
+            bool notesMoved = false, restSame = true;
+            for (int i = 0; i < 64; ++i)
+            {
+                const auto& zs = z.steps[(std::size_t) i]; const auto& bs = base.steps[(std::size_t) i];
+                notesMoved = notesMoved || zs.note != bs.note;
+                restSame = restSame && zs.on == bs.on && zs.gate == bs.gate && zs.slew == bs.slew && zs.ratchet == bs.ratchet
+                                    && zs.mod == bs.mod && zs.modShape == bs.modShape && zs.modRate == bs.modRate;
+            }
+            CHECK (notesMoved && restSame);
+            fg::StepData none = base;
+            fg::Rng r4 (7);
+            fg::reseedSteps (none, 0, 64, fg::ReseedKind::All, 0, r4, 0u);                              // nothing included: nothing changes
+            CHECK (none == base);
+            fg::StepData single = base;
+            fg::Rng r5 (7);
+            fg::reseedSteps (single, 0, 64, fg::ReseedKind::Gate, 0, r5, 0u);                           // the single buttons ignore the filter
+            CHECK (! (single == base));
+        }
+
+        // the base note: the default gives the pitches of 0.7.0, another one shifts everything
+        CHECK (fg::pitchFor (12, 0, 0, 0) == 60 && fg::pitchFor (12, 0, 0, 0, 48) == 60);
+        CHECK (fg::pitchFor (12, 0, 0, 0, 60) == 72 && fg::pitchFor (0, 0, 0, 0, 0) == 0);
+        CHECK (fg::pitchFor (59, 27, 11, 24, 96) == 127);                                               // clamped into MIDI 0 to 127
     }
 
     std::printf ("engine tests: %d checks passed\n", checks - failures);

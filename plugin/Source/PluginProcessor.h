@@ -24,6 +24,12 @@
 //    TRANSPOSE and RESIZE change the branch snapshot but not the UNMUTATE point. RESEED (not BRANCHES) and Mutate change neither.
 //  - UNMUTATE puts the steps and LENGTH back to the UNMUTATE point and rebuilds the branches from it. RESEED: BRANCHES takes a new branch
 //    seed and a fresh snapshot of the trunk as it is now.
+// Milestone 9: PATTERN LOAD and SAVE (counted like the other buttons, carried out on the window thread) use the slot chosen with PATTERN.
+//  - SAVE stores the steps and LENGTH in the slot (overwriting what was there); the 16 slots are saved with the project.
+//  - LOAD replaces the steps and LENGTH from the slot (an empty slot does nothing). It is a manual edit: it sets the UNMUTATE point and
+//    makes the branches again. The Performance effects are never stored, so a pattern never holds them.
+//  - The settings page: MIDI channel, the two CC numbers and the base note are handed to the player every block; RESIZE METHOD, the
+//    Reseed filter and the branch-regeneration filter are read when the buttons or edits they change are carried out.
 // Then the button is switched off again a few times a second ("act, then pop back"). A project saved while one was on opens with all
 // of them off and none of them acts on loading.
 //
@@ -34,6 +40,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <fg/Clock.h>
+#include <fg/Patterns.h>
 #include <fg/Steps.h>
 #include "Parameters.h"
 
@@ -79,6 +86,15 @@ public:
     void resizeTrunk (int direction);                       // -1 SHRINK / +1 EXPAND: the trunk becomes half / twice as long (LENGTH follows), for good
     int getStepsRevision() const { return stepsRevision.load() + mutationRevision.load(); }   // goes up whenever the steps change (the window repaints on it)
 
+    // ---- the pattern bank (milestone 9) ----
+    struct PatternInfo { bool used = false; int length = 8; };
+    PatternInfo getPatternInfo (int slot) const;            // for the panel: is the slot full, and how long is its pattern
+    int getPatternSlot() const;                             // the slot PATTERN shows, 0 to 15
+    void savePatternNow (int slot);                         // what the SAVE button does for a slot (also used by the automatic checks)
+    void loadPatternNow (int slot);                         // what the LOAD button does for a slot (an empty slot does nothing)
+    int getPatternRevision() const { return patternRevision.load(); }     // goes up whenever a slot changes
+    int getBranchRevision() const { return branchRevision.load(); }       // goes up whenever the branches are made again (for the automatic checks)
+
     // ---- branches (read-only, for the TREE) ----
     struct BranchView { int count = 0; int path = 0; std::uint32_t seed = 1; };
     BranchView getBranchView() const;
@@ -120,8 +136,12 @@ private:
     void saveStepsToState();
     void saveStepsQuietly();                    // saves mutated steps without telling the audio thread to copy them again
     void loadStepsFromState();
-    void markEdit();                            // a manual edit: the UNMUTATE point and the branch snapshot become the steps as they are now
+    void markEdit (bool remakeBranches = true);                            // a manual edit: the UNMUTATE point and the branch snapshot become the steps as they are now
     void renewBranches();                       // the branches are made again from the steps as they are now
+    void savePatternBankToState();
+    void loadPatternBankFromState();
+    enum RegenEdit { kRegenNote, kRegenGate, kRegenSlew, kRegenRatchet, kRegenOnOff, kRegenLength, kRegenResize, kRegenRotate, kRegenTranspose, kNumRegenEdits };
+    bool regenOn (RegenEdit) const;             // the settings page's branch-regeneration filter: does this kind of edit make the branches again?
     void reseed (fg::ReseedKind);
     void reseedBranches();
     void drainMutations();
@@ -137,6 +157,8 @@ private:
     std::atomic<int> stepsRevision { 0 };
     std::atomic<int> mutationRevision { 0 };
     fg::StepData undoSteps, branchSource;                       // guarded by stepLock
+    fg::PatternBank bank;                                       // the 16 pattern slots, guarded by stepLock
+    std::atomic<int> patternRevision { 0 };
     int undoLength = 8;
     std::atomic<int> branchRevision { 0 };
     std::atomic<std::uint32_t> branchSeed { 1 };
@@ -177,11 +199,21 @@ private:
     std::atomic<float>* chanceParams[fg::ChanceMix::kNumModes] = {};
     std::atomic<float>* chanceRunMinParam = nullptr;
     std::atomic<float>* chanceRunMaxParam = nullptr;
+    std::atomic<float>* midiChannelParam = nullptr;     // the settings page (milestone 9)
+    std::atomic<float>* ccSlewParam = nullptr;
+    std::atomic<float>* ccModParam = nullptr;
+    std::atomic<float>* baseNoteParam = nullptr;
+    std::atomic<float>* resizeMethodParam = nullptr;
+    std::atomic<float>* patternSlotParam = nullptr;
+    std::atomic<float>* reseedFilterParams[5] = {};     // Note, Gate, Slew, Ratchet, Mod
+    std::atomic<float>* regenParams[kNumRegenEdits] = {};
+    int audioChannel = 0;                               // the MIDI channel the audio thread is using (0 = not yet known)
 
     std::atomic<std::uint32_t> orderSeed { 1 };                 // seed of the random orders (saved in the state)
     std::atomic<std::uint32_t> resetCount { 0 };                // goes up at every press of RESET
     std::atomic<int> pendingRotateLeft { 0 }, pendingRotateRight { 0 }, pendingTransposeUp { 0 }, pendingTransposeDown { 0 };
     std::atomic<int> pendingShrink { 0 }, pendingExpand { 0 };
+    std::atomic<int> pendingPatternLoad { 0 }, pendingPatternSave { 0 };
     std::atomic<int> pendingUnmutate { 0 }, pendingReseedAll { 0 }, pendingReseedBranches { 0 }, pendingReseedNote { 0 }, pendingReseedGate { 0 },
                      pendingReseedSlew { 0 }, pendingReseedRatchet { 0 }, pendingReseedMod { 0 };
 

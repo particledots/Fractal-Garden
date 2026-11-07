@@ -61,5 +61,8 @@ namespace fg
     //  Ratchet: 75 % x1, otherwise one of the others (the same weights as Micro Mutate).
     //  Mod:     value 0 to 100 %, any of the eight shapes, rate x1 60 % of the time and otherwise any other of the 16 rates.
     //  All:     all of the above.
-    void reseedSteps (StepData&, int first, int count, ReseedKind, int scale, Rng&);
+    //  For All, allMask says which of the five parts are included (the settings page's RESEED FILTER): bit 0 Note, 1 Gate, 2 Slew, 3 Ratchet,
+    //  4 Mod. The default includes all five, which is the same as before. A part that is left out draws no random numbers.
+    inline constexpr unsigned kReseedAllMask = 0x1fu;
+    void reseedSteps (StepData&, int first, int count, ReseedKind, int scale, Rng&, unsigned allMask = kReseedAllMask);
 }

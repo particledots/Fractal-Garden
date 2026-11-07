@@ -221,6 +221,7 @@ int StepEditor::length() const   { return readInt (proc.getValueTreeState(), fg:
 int StepEditor::scaleIndex() const { return juce::jlimit (0, fg::kNumScales - 1, readInt (proc.getValueTreeState(), fg::id::scale)); }
 int StepEditor::keyIndex() const   { return juce::jlimit (0, fg::kNumKeys - 1, readInt (proc.getValueTreeState(), fg::id::key)); }
 int StepEditor::rootValue() const  { return readInt (proc.getValueTreeState(), fg::id::root); }
+int StepEditor::baseNoteValue() const { return juce::jlimit (0, fg::kMaxBaseNote, readInt (proc.getValueTreeState(), fg::id::baseNote)); }
 int StepEditor::activePages() const { return juce::jlimit (1, fg::kNumPages, (length() + fg::kStepsPerPage - 1) / fg::kStepsPerPage); }
 int StepEditor::modMode() const  { return readInt (proc.getValueTreeState(), fg::id::modMode); }
 int StepEditor::tab() const      { return proc.getEditorTab(); }
@@ -354,7 +355,7 @@ void StepEditor::paint (juce::Graphics& g)
                 char nm[16];
                 switch (tb)
                 {
-                    case 0:  fg::noteName (fg::pitchFor (st.note, scaleIndex(), keyIndex(), rootValue()), nm, sizeof nm); readout = nm; break;
+                    case 0:  fg::noteName (fg::pitchFor (st.note, scaleIndex(), keyIndex(), rootValue(), baseNoteValue()), nm, sizeof nm); readout = nm; break;
                     case 1:  readout = juce::String (st.gate) + " %"; break;
                     case 2:  readout = juce::String (st.slew) + " %"; break;
                     case 3:  readout = "x" + juce::String (fg::kRatchetAmounts[juce::jlimit (0, fg::kRatchetMax, (int) st.ratchet)]); break;
@@ -575,6 +576,105 @@ void ChanceMixPanel::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+// SettingsPanel
+namespace
+{
+    constexpr const char* kStepperIds[4]   = { fg::id::midiChannel, fg::id::ccSlew, fg::id::ccMod, fg::id::baseNote };
+    constexpr const char* kStepperNames[4] = { "MIDI CHANNEL", "SLEW CC", "MOD CC", "BASE NOTE" };
+    constexpr const char* kReseedIds[5]    = { fg::id::reseedFilterNote, fg::id::reseedFilterGate, fg::id::reseedFilterSlew,
+                                               fg::id::reseedFilterRatchet, fg::id::reseedFilterMod };
+    constexpr const char* kReseedNames[5]  = { "NOTE", "GATE", "SLEW", "RATCHET", "MOD" };
+    constexpr const char* kRegenIds[9]     = { fg::id::regenNote, fg::id::regenGate, fg::id::regenSlew, fg::id::regenRatchet, fg::id::regenStepOnOff,
+                                               fg::id::regenLength, fg::id::regenResize, fg::id::regenRotate, fg::id::regenTranspose };
+    constexpr const char* kRegenNames[9]   = { "NOTE", "GATE", "SLEW", "RATCHET", "ON / OFF", "LENGTH", "RESIZE", "ROTATE", "TRANSPOSE" };
+}
+
+SettingsPanel::SettingsPanel (juce::AudioProcessorValueTreeState& apvts) : state (apvts)
+{
+    for (int i = 0; i < 4; ++i)
+    {
+        auto st = std::make_unique<Stepper>();
+        st->name = kStepperNames[i];
+        st->slider.setSliderStyle (juce::Slider::IncDecButtons);
+        st->slider.setIncDecButtonsMode (juce::Slider::incDecButtonsNotDraggable);
+        st->slider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 64, 28);
+        st->slider.onValueChange = [this] { repaint(); };
+        st->attachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (apvts, kStepperIds[i], st->slider);
+        addAndMakeVisible (st->slider);
+        ids.push_back (kStepperIds[i]);
+        steppers.push_back (std::move (st));
+    }
+
+    resizeChips = std::make_unique<ChipSelector> (apvts, fg::id::resizeMethod, juce::StringArray { "SPREAD", "STRETCH", "CLONE" }, 11.0f, 84, 90);
+    addAndMakeVisible (*resizeChips);
+    ids.push_back (fg::id::resizeMethod);
+
+    auto addToggle = [&] (std::vector<std::unique_ptr<Toggle>>& list, const char* id, const char* label)
+    {
+        auto t = std::make_unique<Toggle>();
+        t->button.setButtonText (label);
+        t->button.getProperties().set ("fontSize", 10.5);
+        t->button.setClickingTogglesState (true);
+        t->attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (apvts, id, t->button);
+        addAndMakeVisible (t->button);
+        ids.push_back (id);
+        list.push_back (std::move (t));
+    };
+    for (int i = 0; i < 5; ++i) addToggle (reseedToggles, kReseedIds[i], kReseedNames[i]);
+    for (int i = 0; i < 9; ++i) addToggle (regenToggles, kRegenIds[i], kRegenNames[i]);
+
+    done.getProperties().set ("fontSize", 12.0);
+    done.onClick = [this] { if (onDone) onDone(); };
+    addAndMakeVisible (done);
+}
+
+void SettingsPanel::resized()
+{
+    for (int i = 0; i < 4; ++i)
+        steppers[(std::size_t) i]->slider.setBounds (24 + i * 196, 76, 168, 30);
+    resizeChips->setBounds (24, 148, 3 * 90, 32);
+    for (int i = 0; i < (int) reseedToggles.size(); ++i)
+        reseedToggles[(std::size_t) i]->button.setBounds (24 + i * 88, 232, 82, 30);
+    for (int i = 0; i < (int) regenToggles.size(); ++i)
+        regenToggles[(std::size_t) i]->button.setBounds (24 + i * 88, 322, 82, 30);
+    done.setBounds (kWidth - 76, 8, 64, 24);
+}
+
+void SettingsPanel::paint (juce::Graphics& g)
+{
+    const auto r = getLocalBounds().toFloat().reduced (0.75f);
+    g.setColour (juce::Colour (0xff1d2024));
+    g.fillRoundedRectangle (r, 8.0f);
+    g.setColour (amber);
+    g.drawRoundedRectangle (r, 8.0f, 1.5f);
+
+    drawAt (g, "SETTINGS", 24.0f, 20.0f, sans (14.5f, true, 0.12f), text);
+    drawAt (g, "the manual's options, as plain settings  |  they are saved with the project", (float) kWidth - 92.0f, 20.0f, sans (11.5f), muted, anchorEnd);
+
+    for (int i = 0; i < 4; ++i)
+        drawAt (g, steppers[(std::size_t) i]->name, (float) (24 + i * 196), 60.0f, sans (11.5f, true, 0.05f), text);
+    {
+        char nm[16];
+        const int base = roundedInt ((float) steppers[3]->slider.getValue());
+        fg::noteName (base, nm, sizeof nm);
+        drawAt (g, "= " + juce::String (nm) + " in Logic", (float) (24 + 3 * 196), 122.0f, mono (11.5f), amber);
+        drawAt (g, "channel 1 to 16", 24.0f, 122.0f, mono (11.5f), muted);
+        drawAt (g, "CC 0 to 127 (default 84)", 24.0f + 196.0f, 122.0f, mono (11.5f), muted);
+        drawAt (g, "CC 0 to 127 (default 1)", 24.0f + 392.0f, 122.0f, mono (11.5f), muted);
+    }
+
+    drawAt (g, "RESIZE METHOD", 24.0f, 140.0f, sans (11.5f, true, 0.05f), text);
+    drawAt (g, "how EXPAND fills the new steps: SPREAD leaves them empty, STRETCH repeats each step, CLONE repeats the whole pattern",
+            24.0f, 198.0f, mono (11.0f), muted);
+
+    drawAt (g, "RESEED ALL CHANGES", 24.0f, 222.0f, sans (11.5f, true, 0.05f), text);
+    drawAt (g, "lit = included when RESEED ALL is pressed (the single RESEED buttons are not affected)", 24.0f, 270.0f, mono (11.0f), muted);
+
+    drawAt (g, "BRANCHES ARE MADE AGAIN BY", 24.0f, 312.0f, sans (11.5f, true, 0.05f), text);
+    drawAt (g, "lit = this kind of edit makes the branches again (Mod edits always do; Unmutate and Pattern Load always do)", 24.0f, 360.0f, mono (11.0f), muted);
+}
+
+//==============================================================================
 // The panel
 FractalGardenStyledPanel::FractalGardenStyledPanel (FractalGardenProcessor& p, const juce::String& version)
     : proc (p), state (p.getValueTreeState()), versionText (version)
@@ -584,8 +684,12 @@ FractalGardenStyledPanel::FractalGardenStyledPanel (FractalGardenProcessor& p, c
     // Header
     plainSliders.getProperties().set ("fontSize", 13.5);
     plainSliders.onClick = [this] { if (onSwitchToPlain) onSwitchToPlain(); };
-    plainSliders.setBounds (960, 30, 192, 35);
+    plainSliders.setBounds (958, 46, 194, 28);
     addAndMakeVisible (plainSliders);
+    settingsButton.getProperties().set ("fontSize", 13.5);
+    settingsButton.onClick = [this] { openSettings (! settingsPanel->isVisible()); };
+    settingsButton.setBounds (958, 14, 194, 28);
+    addAndMakeVisible (settingsButton);
 
     // Step editor and the Mod Out chips (on top of its card)
     stepEditor = std::make_unique<StepEditor> (proc);
@@ -755,6 +859,14 @@ FractalGardenStyledPanel::FractalGardenStyledPanel (FractalGardenProcessor& p, c
     for (const auto& id : chancePanel->controlledParameterIds())
         controlIds.push_back (id);
 
+    // The settings page pop-over (hidden until SETTINGS... is pressed)
+    settingsPanel = std::make_unique<SettingsPanel> (state);
+    settingsPanel->setBounds ((kWidth - SettingsPanel::kWidth) / 2, 118, SettingsPanel::kWidth, SettingsPanel::kHeight);
+    settingsPanel->onDone = [this] { openSettings (false); };
+    addChildComponent (*settingsPanel);
+    for (const auto& id : settingsPanel->controlledParameterIds())
+        controlIds.push_back (id);
+
     const auto view = proc.getPlayerView();
     lastStepCount = view.stepCount;
     lastNoteCount = view.noteCount;
@@ -822,6 +934,15 @@ void FractalGardenStyledPanel::openChance (bool open)
     if (open)
         chancePanel->toFront (false);
     chanceButton.setToggleState (open, juce::dontSendNotification);
+    repaint();
+}
+
+void FractalGardenStyledPanel::openSettings (bool open)
+{
+    settingsPanel->setVisible (open);
+    if (open)
+        settingsPanel->toFront (false);
+    settingsButton.setToggleState (open, juce::dontSendNotification);
     repaint();
 }
 
@@ -926,6 +1047,9 @@ void FractalGardenStyledPanel::timerCallback()
     mixIn (h.known ? 1 : 0); mixIn (h.playing ? 1 : 0); mixIn (h.tempoKnown ? 1 : 0); mixIn (roundedInt ((float) h.bpm * 10.0f));
     mixIn (proc.getEditorPage());
     mixIn (chancePanel->isVisible() ? 1 : 0);
+    mixIn (settingsPanel->isVisible() ? 1 : 0);
+    mixIn (proc.getPatternRevision());
+    mixIn (proc.getPatternSlot());
     if (sig != lastSignature)
     {
         const int oldBranch = lastSignature;   // (only used to decide whether the Path card needs a repaint)
@@ -1042,6 +1166,12 @@ void FractalGardenStyledPanel::paint (juce::Graphics& g)
     // Row 2
     const int y2 = 690;
     smallCard (g, 48, y2, 286, "PATTERN  (16 slots)");
+    {
+        const int slot = proc.getPatternSlot();
+        const auto info = proc.getPatternInfo (slot);
+        drawAt (g, info.used ? "SLOT " + juce::String (slot + 1) + ": " + juce::String (info.length) + " STEPS" : "SLOT " + juce::String (slot + 1) + ": EMPTY",
+                326.0f, (float) y2 + 14.0f, mono (11.0f), info.used ? amber : muted, anchorEnd);
+    }
     fillCard (g, { 342.0f, (float) y2, 180.0f, 64.0f });
     drawAt (g, "ROOT", 412.0f, (float) y2 + 20.0f, sans (12.5f, true, 0.12f), text);
     drawAt (g, rootText(), 412.0f, (float) y2 + 42.0f, mono (15.0f), amber);

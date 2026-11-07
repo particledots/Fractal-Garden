@@ -178,17 +178,25 @@ bool resizeShrink (StepData& data, int& length)
     return true;
 }
 
-bool resizeExpand (StepData& data, int& length)
+bool resizeExpand (StepData& data, int& length, ResizeMethod method)
 {
     const int L = std::clamp (length, 1, kNumSteps);
     if (L * 2 > kNumSteps)
         return false;
     const StepData before = data;
+    if (method == ResizeMethod::Clone)
+    {
+        for (int i = 0; i < L; ++i)
+            data.steps[(std::size_t) (L + i)] = before.steps[(std::size_t) i];
+        length = L * 2;
+        return true;
+    }
     for (int i = 0; i < L; ++i)
     {
         data.steps[(std::size_t) (2 * i)] = before.steps[(std::size_t) i];
         Step gap = before.steps[(std::size_t) i];
-        gap.on = false;
+        if (method == ResizeMethod::Spread)
+            gap.on = false;
         data.steps[(std::size_t) (2 * i + 1)] = gap;
     }
     length = L * 2;

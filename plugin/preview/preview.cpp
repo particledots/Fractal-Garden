@@ -1,12 +1,14 @@
 // Offline preview and control checks (not part of the plugin; only built with -DFG_BUILD_PREVIEW=ON).
 //   1. draws the styled panel in the states of pictures A, B and C, and the plain window, to picture files;
-//   2. checks, in BOTH windows, that all 46 ids exist, each has a control, and each control moves exactly one parameter;
+//   2. checks, in BOTH windows, that all 65 ids exist, each has a control, and each control moves exactly one parameter;
 //   3. checks saving and reloading (controls, step data, tab, page, window choice), the momentary buttons popping back,
 //      the Knob Mode titles and colours, the Order slot (REPEAT ENDS / CHANCE...), and the Chance mix pop-over;
 //   4. checks that the plugin adds no MIDI while Logic is stopped, and (milestone 3) that the sequencer follows a simulated Logic
 //      transport: notes, stop, relocate, bypass, RATE / RATIO / LENGTH, two instances, the header read-outs;
 //   5. (milestone 4) Scale, Key, Root and Order in the playing plugin, the ROTATE, TRANSPOSE and RESET buttons, page and step editing,
 //      and that loading a project does not press any button.
+//   7. (milestone 9) the pattern bank (SAVE, LOAD, empty slots, saved with the project, loading presses nothing), the settings page
+//      (MIDI channel, CC numbers, base note, Resize method, Reseed filter, branch-regeneration filter).
 //   6. (milestones 6 and 7) branches and Path in the playing plugin, the TREE letters, Mutate and Micro Mutate saved into the steps, the
 //      seven RESEED buttons (page and all 64), UNMUTATE (and what sets or does not set its point), and saving / loading all of it.
 // Usage: FractalGardenPreview <folder for the pictures>
@@ -17,6 +19,8 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <functional>
+#include <memory>
 #include <iostream>
 #include <map>
 #include <set>
@@ -89,11 +93,11 @@ namespace
     {
         auto& ids = editor.controlledParameterIds();
         std::set<juce::String> idSet (ids.begin(), ids.end());
-        expect ((int) ids.size() == fg::kNumParameters, which + ": exactly 46 controls (" + juce::String ((int) ids.size()) + ")");
+        expect ((int) ids.size() == fg::kNumParameters, which + ": exactly 65 controls (" + juce::String ((int) ids.size()) + ")");
         expect ((int) idSet.size() == fg::kNumParameters, which + ": no parameter has two controls");
         for (const auto& spec : fg::kParams)
             expect (idSet.count (spec.id) == 1, which + ": a control for " + spec.id);
-        expect (proc.getParameters().size() == fg::kNumParameters, "the plugin exposes 46 parameters");
+        expect (proc.getParameters().size() == fg::kNumParameters, "the plugin exposes 65 parameters");
     }
 
     void resetAll (FractalGardenProcessor& p)
@@ -136,7 +140,7 @@ int main (int argc, char** argv)
     expect (proc.getName() == "Fractal-Garden", "the plugin is called Fractal-Garden");
     expect (proc.isMidiEffect(), "it is a MIDI effect");
 
-    // ---- all 46 controls, in both windows ----
+    // ---- all 65 controls, in both windows ----
     {
         FractalGardenEditor editor (proc);
         editor.setSize (1080, 720);
@@ -1246,6 +1250,345 @@ int main (int argc, char** argv)
                     expect (k >= 0 && k < 5 && std::string ("RIT M?").find (fg::kBranchLetters[k]) != std::string::npos, "every branch has one of the letters R I T M ?");
                 }
             }
+        }
+    }
+
+
+    // ---- milestone 9: the pattern bank and the settings page ----
+    {
+        auto press = [&] (FractalGardenProcessor& p, const char* id)
+        {
+            setParam (p, id, 1);
+            letWindowThreadRun (150);          // the window thread carries it out and switches it off again
+            letWindowThreadRun (250);
+        };
+        auto lengthOf = [&] (FractalGardenProcessor& p) { return juce::roundToInt (getParam (p, fg::id::length)); };
+
+        // -- the pattern bank: slots start empty; SAVE, then LOAD; an empty slot loads nothing; LOAD is an edit --
+        {
+            FractalGardenProcessor p;
+            p.setPlayConfigDetails (0, 0, 48000.0, 512);
+            for (int i = 0; i < fg::kNumPatternSlots; ++i)
+                expect (! p.getPatternInfo (i).used, "slot " + juce::String (i + 1) + " starts empty");
+            const auto a = p.getSteps();
+            setParam (p, fg::id::patternSlot, 2);
+            press (p, fg::id::patternSave);
+            expect (p.getPatternInfo (2).used && p.getPatternInfo (2).length == 8 && ! p.getPatternInfo (1).used, "SAVE fills the chosen slot (with LENGTH)");
+            expect (getParam (p, fg::id::patternSave) < 0.5f, "SAVE pops back off");
+            fg::Step s = a.steps[1]; s.note = 44; s.gate = 80; p.setStep (1, s);
+            setParam (p, fg::id::length, 12);
+            letWindowThreadRun (150);
+            const auto b = p.getSteps();
+            setParam (p, fg::id::patternSlot, 5);
+            press (p, fg::id::patternLoad);
+            expect (p.getSteps() == b && lengthOf (p) == 12, "LOAD on an empty slot does nothing");
+            setParam (p, fg::id::patternSlot, 2);
+            press (p, fg::id::patternLoad);
+            expect (p.getSteps() == a && lengthOf (p) == 8, "LOAD brings back the saved steps and LENGTH");
+            expect (getParam (p, fg::id::patternLoad) < 0.5f, "LOAD pops back off");
+            letWindowThreadRun (200);
+            expect (lengthOf (p) == 8 && p.getSteps() == a, "LOAD's own LENGTH change is not seen as an edit");
+            // LOAD is a manual edit: it is the new UNMUTATE point
+            press (p, fg::id::transposeUp);
+            expect (! (p.getSteps() == a), "TRANSPOSE changed the loaded pattern");
+            press (p, fg::id::unmutate);
+            expect (p.getSteps() == a && lengthOf (p) == 8, "UNMUTATE goes back to the loaded pattern");
+            // overwriting a full slot
+            p.setStep (1, s);
+            setParam (p, fg::id::patternSlot, 2);
+            press (p, fg::id::patternSave);
+            const auto b8 = p.getSteps();
+            press (p, fg::id::rotateRight);
+            press (p, fg::id::patternLoad);
+            expect (p.getSteps() == b8, "SAVE over a full slot replaces it");
+            // the Performance effects are never stored
+            setParam (p, fg::id::perfRatchet, 1.0f); setParam (p, fg::id::perfSlew, 1.0f); setParam (p, fg::id::perfMutate, 1.0f);
+            const auto beforeFx = p.getSteps();
+            setParam (p, fg::id::patternSlot, 9);
+            press (p, fg::id::patternSave);
+            press (p, fg::id::patternLoad);
+            expect (p.getSteps() == beforeFx, "a pattern saved with the Performance knobs up holds only the stored steps");
+        }
+        // -- the branches are made again by LOAD --
+        {
+            FractalGardenProcessor p;
+            p.setPlayConfigDetails (0, 0, 48000.0, 512);
+            setParam (p, fg::id::branch, 1.0f);
+            press (p, fg::id::patternSave);
+            const int rev = p.getBranchRevision();
+            press (p, fg::id::patternLoad);
+            expect (p.getBranchRevision() > rev, "LOAD makes the branches again");
+        }
+        // -- saved with the project; loading a project presses nothing --
+        {
+            FractalGardenProcessor p;
+            p.setPlayConfigDetails (0, 0, 48000.0, 512);
+            const auto a = p.getSteps();
+            setParam (p, fg::id::patternSlot, 0);
+            press (p, fg::id::patternSave);
+            fg::Step s = a.steps[2]; s.note = 40; s.slew = 33; p.setStep (2, s);
+            const auto b = p.getSteps();
+            setParam (p, fg::id::patternSlot, 3);
+            setParam (p, fg::id::patternSave, 1);                   // saved while SAVE is on and not yet carried out
+            juce::MemoryBlock withSaveOn;
+            p.getStateInformation (withSaveOn);
+            setParam (p, fg::id::patternSlot, 0);
+            setParam (p, fg::id::patternLoad, 1);                   // ... and while LOAD is on
+            juce::MemoryBlock withLoadOn;
+            p.getStateInformation (withLoadOn);
+
+            FractalGardenProcessor p2;
+            p2.setPlayConfigDetails (0, 0, 48000.0, 512);
+            p2.setStateInformation (withLoadOn.getData(), (int) withLoadOn.getSize());
+            letWindowThreadRun (450);
+            expect (p2.getPatternInfo (0).used && p2.getPatternInfo (0).length == 8, "the pattern bank survives saving and loading");
+            expect (p2.getSteps() == b, "a project saved with LOAD on does not load a pattern when it opens");
+            expect (getParam (p2, fg::id::patternLoad) < 0.5f && getParam (p2, fg::id::patternSave) < 0.5f, "no pattern button is on after loading");
+            setParam (p2, fg::id::patternSlot, 0);
+            press (p2, fg::id::patternLoad);
+            expect (p2.getSteps() == a, "a pattern loaded from a reopened project is the one that was saved");
+
+            FractalGardenProcessor p3;
+            p3.setPlayConfigDetails (0, 0, 48000.0, 512);
+            p3.setStateInformation (withSaveOn.getData(), (int) withSaveOn.getSize());
+            letWindowThreadRun (450);
+            expect (! p3.getPatternInfo (3).used, "a project saved with SAVE on does not save a pattern when it opens");
+
+            // an older project (no bank) and a damaged bank: all slots empty, nothing else changes
+            auto xml = juce::parseXML ("<Parameters/>");
+            juce::MemoryBlock old;
+            juce::AudioProcessor::copyXmlToBinary (*xml, old);
+            FractalGardenProcessor p4;
+            p4.setPlayConfigDetails (0, 0, 48000.0, 512);
+            p4.setStateInformation (old.getData(), (int) old.getSize());
+            bool anyUsed = false;
+            for (int i = 0; i < fg::kNumPatternSlots; ++i) anyUsed = anyUsed || p4.getPatternInfo (i).used;
+            expect (! anyUsed, "an older project opens with 16 empty slots");
+            auto xml2 = juce::parseXML ("<Parameters patternBank=\"garbage!\"/>");
+            juce::MemoryBlock dmg;
+            juce::AudioProcessor::copyXmlToBinary (*xml2, dmg);
+            FractalGardenProcessor p5;
+            p5.setPlayConfigDetails (0, 0, 48000.0, 512);
+            p5.setStateInformation (dmg.getData(), (int) dmg.getSize());
+            anyUsed = false;
+            for (int i = 0; i < fg::kNumPatternSlots; ++i) anyUsed = anyUsed || p5.getPatternInfo (i).used;
+            expect (! anyUsed, "a damaged pattern bank opens as 16 empty slots");
+        }
+
+        // -- the settings page in the playing plugin: MIDI channel, CC numbers, base note --
+        {
+            MockHost host;
+            const double sr = 48000.0, pps = 120.0 / 60.0 / sr;
+            struct Seen { std::vector<int> notes, channels, ccNumbers; };
+            auto run = [&] (FractalGardenProcessor& p, int blocks, int firstBlock, Seen& seen, std::map<int, int>* held = nullptr)
+            {
+                juce::AudioBuffer<float> audio (0, 512);
+                for (int b = 0; b < blocks; ++b)
+                {
+                    host.playing = true;
+                    host.ppq = (double) ((firstBlock + b) * 512) * pps;
+                    juce::MidiBuffer midi;
+                    p.processBlock (audio, midi);
+                    for (auto meta : midi)
+                    {
+                        const auto m = meta.getMessage();
+                        if (m.isNoteOn()) { seen.notes.push_back (m.getNoteNumber()); seen.channels.push_back (m.getChannel()); if (held) ++(*held)[m.getChannel()]; }
+                        if (m.isNoteOff() && held) --(*held)[m.getChannel()];
+                        if (m.isAllNotesOff() && held) (*held)[m.getChannel()] = 0;
+                        if (m.isController() && ! m.isAllNotesOff()) seen.ccNumbers.push_back (m.getControllerNumber());      // (all-notes-off is CC 123: not one of ours)
+                    }
+                }
+            };
+            auto makeProc = [&] ()
+            {
+                auto p = std::make_unique<FractalGardenProcessor>();
+                p->setPlayConfigDetails (0, 0, sr, 512);
+                p->prepareToPlay (sr, 512);
+                p->setPlayHead (&host);
+                return p;
+            };
+            Seen base, custom;
+            {
+                auto p = makeProc();
+                run (*p, 60, 0, base);
+            }
+            expect (! base.notes.empty(), "the settings test plays notes");
+            bool allOne = true, ccsDefault = true;
+            for (int c : base.channels) allOne = allOne && c == 1;
+            for (int c : base.ccNumbers) ccsDefault = ccsDefault && (c == 84 || c == 1);
+            expect (allOne && ccsDefault && ! base.ccNumbers.empty(), "the defaults: channel 1, CC 84 and CC 1");
+            {
+                auto p = makeProc();
+                setParam (*p, fg::id::midiChannel, 5);
+                setParam (*p, fg::id::ccSlew, 20);
+                setParam (*p, fg::id::ccMod, 21);
+                setParam (*p, fg::id::baseNote, 60);
+                run (*p, 60, 0, custom);
+            }
+            bool ch5 = ! custom.channels.empty(), ccs = ! custom.ccNumbers.empty(), shifted = custom.notes.size() == base.notes.size();
+            for (int c : custom.channels) ch5 = ch5 && c == 5;
+            for (int c : custom.ccNumbers) ccs = ccs && (c == 20 || c == 21);
+            for (std::size_t i = 0; shifted && i < base.notes.size(); ++i) shifted = custom.notes[i] == base.notes[i] + 12;
+            expect (ch5, "MIDI CHANNEL 5: every note is on channel 5");
+            expect (ccs, "the CC numbers 20 and 21 are used instead of 84 and 1");
+            expect (shifted, "BASE NOTE 60 plays every note an octave above the default (48)");
+
+            // changing the channel while a note sounds ends it on the old channel
+            {
+                auto p = makeProc();
+                setParam (*p, fg::id::midiChannel, 5);
+                setParam (*p, fg::id::ratio, 0);                    // /8: long steps, so a note is sounding at the block boundary we pick
+                Seen s1, s2;
+                std::map<int, int> held;
+                run (*p, 6, 0, s1, &held);
+                expect (held[5] >= 0, "notes were played on channel 5");
+                setParam (*p, fg::id::midiChannel, 9);
+                run (*p, 120, 6, s2, &held);              // a /8 step is 48000 samples: the next note starts about 94 blocks in
+                bool none5 = true;
+                for (int c : s2.channels) none5 = none5 && c != 5;
+                expect (none5 && held[5] == 0, "after the channel change nothing is left sounding on channel 5, and new notes use channel 9");
+                bool any9 = false;
+                for (int c : s2.channels) any9 = any9 || c == 9;
+                expect (any9, "notes continue on the new channel");
+            }
+        }
+
+        // -- Resize method, Reseed filter, branch-regeneration filter --
+        {
+            FractalGardenProcessor p;
+            p.setPlayConfigDetails (0, 0, 48000.0, 512);
+            const auto before = p.getSteps();
+            setParam (p, fg::id::resizeMethod, 1);                  // Stretch
+            press (p, fg::id::resizeExpand);
+            auto now = p.getSteps();
+            bool stretch = lengthOf (p) == 16;
+            for (int i = 0; i < 8; ++i)
+                stretch = stretch && now.steps[(std::size_t) (2 * i)] == before.steps[(std::size_t) i] && now.steps[(std::size_t) (2 * i + 1)] == before.steps[(std::size_t) i];
+            expect (stretch, "RESIZE METHOD Stretch: each step is followed by a copy of itself");
+            press (p, fg::id::unmutate);
+            expect (lengthOf (p) == 8 && p.getSteps() == before, "UNMUTATE undoes the Stretch");
+            setParam (p, fg::id::resizeMethod, 2);                  // Clone
+            press (p, fg::id::resizeExpand);
+            now = p.getSteps();
+            bool clone = lengthOf (p) == 16;
+            for (int i = 0; i < 8; ++i)
+                clone = clone && now.steps[(std::size_t) i] == before.steps[(std::size_t) i] && now.steps[(std::size_t) (8 + i)] == before.steps[(std::size_t) i];
+            expect (clone, "RESIZE METHOD Clone: the whole pattern is repeated");
+        }
+        {
+            FractalGardenProcessor p;
+            p.setPlayConfigDetails (0, 0, 48000.0, 512);
+            setParam (p, fg::id::reseedScope, 1);                   // All 64
+            const auto base = p.getSteps();
+            for (const char* id : { fg::id::reseedFilterGate, fg::id::reseedFilterSlew, fg::id::reseedFilterRatchet, fg::id::reseedFilterMod })
+                setParam (p, id, 0);
+            press (p, fg::id::reseedAll);
+            const auto now = p.getSteps();
+            bool notesMoved = false, restSame = true;
+            for (int i = 0; i < fg::kNumSteps; ++i)
+            {
+                const auto& a = now.steps[(std::size_t) i]; const auto& o = base.steps[(std::size_t) i];
+                notesMoved = notesMoved || a.note != o.note;
+                restSame = restSame && a.on == o.on && a.gate == o.gate && a.slew == o.slew && a.ratchet == o.ratchet && a.mod == o.mod && a.modShape == o.modShape && a.modRate == o.modRate;
+            }
+            expect (notesMoved && restSame, "RESEED FILTER with only Note: RESEED ALL changes the notes and nothing else");
+            press (p, fg::id::unmutate);
+            for (const char* id : { fg::id::reseedFilterGate, fg::id::reseedFilterSlew, fg::id::reseedFilterRatchet, fg::id::reseedFilterMod })
+                setParam (p, id, 1);
+            press (p, fg::id::reseedAll);
+            bool other = false;
+            for (int i = 0; i < fg::kNumSteps; ++i)
+                other = other || p.getSteps().steps[(std::size_t) i].gate != base.steps[(std::size_t) i].gate || p.getSteps().steps[(std::size_t) i].mod != base.steps[(std::size_t) i].mod;
+            expect (other, "with all five on, RESEED ALL changes the other parts too");
+            // the single buttons ignore the filter
+            press (p, fg::id::unmutate);
+            for (const char* id : { fg::id::reseedFilterNote, fg::id::reseedFilterGate, fg::id::reseedFilterSlew, fg::id::reseedFilterRatchet, fg::id::reseedFilterMod })
+                setParam (p, id, 0);
+            press (p, fg::id::reseedGate);
+            bool gateMoved = false;
+            for (int i = 0; i < fg::kNumSteps; ++i)
+                gateMoved = gateMoved || p.getSteps().steps[(std::size_t) i].gate != base.steps[(std::size_t) i].gate;
+            expect (gateMoved, "RESEED: GATE works whatever the filter says");
+        }
+        {
+            FractalGardenProcessor p;
+            p.setPlayConfigDetails (0, 0, 48000.0, 512);
+            setParam (p, fg::id::branch, 1.0f);
+            const auto edit = [&] (std::function<void (fg::Step&)> change)
+            {
+                fg::Step s = p.getSteps().steps[0];
+                change (s);
+                p.setStep (0, s);
+            };
+            // all on (the defaults): every kind of step edit makes the branches again
+            int rev = p.getBranchRevision();
+            edit ([] (fg::Step& s) { s.note = (std::uint8_t) (s.note + 3); });
+            expect (p.getBranchRevision() > rev, "defaults: a Note edit makes the branches again");
+            // Note off: a Note edit leaves them alone, but it is still the UNMUTATE point
+            setParam (p, fg::id::regenNote, 0);
+            rev = p.getBranchRevision();
+            edit ([] (fg::Step& s) { s.note = (std::uint8_t) (s.note + 2); });
+            expect (p.getBranchRevision() == rev, "Note filter off: a Note edit does not make the branches again");
+            const auto edited = p.getSteps();
+            press (p, fg::id::transposeUp);
+            press (p, fg::id::unmutate);
+            expect (p.getSteps() == edited, "...but the edit is still the UNMUTATE point");
+            // a Gate edit still does (Gate is on)
+            rev = p.getBranchRevision();
+            edit ([] (fg::Step& s) { s.gate = (std::uint8_t) (s.gate == 90 ? 40 : 90); });
+            expect (p.getBranchRevision() > rev, "Gate filter on: a Gate edit makes the branches again");
+            // every step filter off: a Mod edit still does (the manual's list has no Mod)
+            for (const char* id : { fg::id::regenGate, fg::id::regenSlew, fg::id::regenRatchet, fg::id::regenStepOnOff })
+                setParam (p, id, 0);
+            rev = p.getBranchRevision();
+            edit ([] (fg::Step& s) { s.slew = (std::uint8_t) (s.slew + 7); s.ratchet = 2; s.on = ! s.on; });
+            expect (p.getBranchRevision() == rev, "all step filters off: Slew, Ratchet and On / Off edits leave the branches alone");
+            edit ([] (fg::Step& s) { s.mod = (std::uint8_t) (s.mod + 5); });
+            expect (p.getBranchRevision() > rev, "a Mod edit always makes the branches again");
+            // Rotate, Transpose, Resize, Length
+            setParam (p, fg::id::regenRotate, 0);
+            rev = p.getBranchRevision();
+            press (p, fg::id::rotateRight);
+            expect (p.getBranchRevision() == rev, "Rotate filter off: ROTATE does not make the branches again");
+            setParam (p, fg::id::regenRotate, 1);
+            press (p, fg::id::rotateRight);
+            expect (p.getBranchRevision() > rev, "Rotate filter on: ROTATE makes them again");
+            setParam (p, fg::id::regenTranspose, 0);
+            rev = p.getBranchRevision();
+            press (p, fg::id::transposeDown);
+            expect (p.getBranchRevision() == rev, "Transpose filter off: TRANSPOSE does not make the branches again");
+            setParam (p, fg::id::regenResize, 0);
+            rev = p.getBranchRevision();
+            press (p, fg::id::resizeExpand);
+            expect (p.getBranchRevision() == rev && lengthOf (p) == 16, "Resize filter off: RESIZE does not make the branches again");
+            setParam (p, fg::id::regenLength, 0);
+            rev = p.getBranchRevision();
+            setParam (p, fg::id::length, 12);
+            letWindowThreadRun (150);
+            expect (p.getBranchRevision() == rev, "Length filter off: LENGTH by hand does not make the branches again");
+            // UNMUTATE always does
+            press (p, fg::id::unmutate);
+            expect (p.getBranchRevision() > rev, "UNMUTATE always makes the branches again");
+        }
+
+        // -- the settings page on the panel --
+        {
+            resetAll (proc);
+            FractalGardenEditor editor (proc);
+            editor.setSize (1080, 720);
+            auto* panel = editor.getStyledPanel();
+            auto* open = findButton (*panel, "SETTINGS...");
+            expect (open != nullptr, "the SETTINGS... button exists");
+            expect (! panel->settingsOpen(), "the settings page starts closed");
+            if (open) open->triggerClick();
+            letWindowThreadRun (60);                                // (a click is carried out by the window thread a moment later)
+            expect (panel->settingsOpen(), "SETTINGS... opens the settings page");
+            snapshotTo (*panel, outDir.getChildFile ("fractal-garden-settings.png"));
+            auto* done = findButton (panel->settingsComponent(), "DONE");
+            expect (done != nullptr, "the settings page has a DONE button");
+            if (done) done->triggerClick();
+            letWindowThreadRun (60);
+            expect (! panel->settingsOpen(), "DONE closes the settings page");
         }
     }
 

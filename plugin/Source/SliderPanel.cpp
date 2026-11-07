@@ -10,7 +10,7 @@ namespace
         return juce::Font (juce::FontOptions (height, bold ? juce::Font::bold : juce::Font::plain));
     }
 
-    constexpr int kLeft = 24, kTop = 84, kColumnWidth = 384, kRowHeight = 42, kRowsPerColumn = 16, kLabelWidth = 120;
+    constexpr int kLeft = 24, kTop = 84, kColumnWidth = 384, kRowHeight = 31, kRowsPerColumn = 22, kLabelWidth = 120, kControlHeight = 26;
 }
 
 FractalGardenSliderPanel::FractalGardenSliderPanel (juce::AudioProcessorValueTreeState& s) : state (s)
@@ -29,7 +29,7 @@ FractalGardenSliderPanel::FractalGardenSliderPanel (juce::AudioProcessorValueTre
                 row->label.setFont (font (14.0f));
                 row->label.setColour (juce::Label::textColourId, kText);
                 row->slider.setSliderStyle (juce::Slider::LinearHorizontal);
-                row->slider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 56, 24);
+                row->slider.setTextBoxStyle (juce::Slider::TextBoxRight, false, 56, 22);
                 row->attachment = std::make_unique<SliderAttachment> (state, spec.id, row->slider);
                 addAndMakeVisible (row->label);
                 addAndMakeVisible (row->slider);
@@ -84,7 +84,7 @@ void FractalGardenSliderPanel::paint (juce::Graphics& g)
     g.drawText ("FRACTAL-GARDEN", kLeft, 18, 600, 44, juce::Justification::centredLeft);
     g.setColour (kMuted);
     g.setFont (font (13.0f));
-    g.drawText ("Plain sliders: one ordinary control for each of the 46 parameters. Milestone 2: the controls are saved but nothing plays yet.",
+    g.drawText ("Plain sliders: one ordinary control for each of the 65 parameters.",
                 kLeft, 58, 1000, 20, juce::Justification::centredLeft);
     g.drawText ("Fractal-Garden v" JucePlugin_VersionString " - an original MIDI effect inspired by the feel of a fractal sequencer; not affiliated with Qu-Bit Electronix",
                 kLeft, kHeight - 30, kWidth - 2 * kLeft, 20, juce::Justification::centredLeft);
@@ -98,11 +98,11 @@ void FractalGardenSliderPanel::resized()
         const int col = (int) i / kRowsPerColumn, row = (int) i % kRowsPerColumn;
         const int x = kLeft + col * kColumnWidth, y = kTop + row * kRowHeight;
         if (cells[i].b == nullptr)
-            cells[i].a->setBounds (x, y, 250, 30);
+            cells[i].a->setBounds (x, y, 250, kControlHeight);
         else
         {
-            cells[i].a->setBounds (x, y, kLabelWidth, 30);
-            cells[i].b->setBounds (x + kLabelWidth, y, kColumnWidth - kLabelWidth - 24, 30);
+            cells[i].a->setBounds (x, y, kLabelWidth, kControlHeight);
+            cells[i].b->setBounds (x + kLabelWidth, y, kColumnWidth - kLabelWidth - 24, kControlHeight);
         }
     }
 }

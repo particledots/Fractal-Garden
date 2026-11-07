@@ -121,6 +121,7 @@ private:
     int scaleIndex() const;
     int keyIndex() const;
     int rootValue() const;
+    int baseNoteValue() const;
     int activePages() const;                          // pages that LENGTH reaches
     int stepUnder (juce::Point<int> panelPoint) const;       // the step whose value box is under this point (panel coordinates), or -1
     void dragValue (int stepIndex, int tabIndex, float mouseY);
@@ -159,6 +160,35 @@ private:
 };
 
 //==============================================================================
+// The settings page (milestone 9), a pop-over like the Chance mix one: MIDI channel, the two CC numbers, the base note, the Resize
+// method, the Reseed filter (which parts RESEED ALL changes) and the branch-regeneration filter (which edits make the branches again).
+class SettingsPanel : public juce::Component
+{
+public:
+    explicit SettingsPanel (juce::AudioProcessorValueTreeState&);
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+    std::function<void()> onDone;
+    const std::vector<juce::String>& controlledParameterIds() const { return ids; }
+
+    static constexpr int kWidth = 820, kHeight = 392;
+
+private:
+    struct Stepper { juce::Slider slider; std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment; juce::String name; };
+    struct Toggle { juce::TextButton button; std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> attachment; };
+    juce::AudioProcessorValueTreeState& state;
+    std::vector<std::unique_ptr<Stepper>> steppers;       // MIDI channel, Slew CC, Mod CC, Base note
+    std::unique_ptr<ChipSelector> resizeChips;
+    std::vector<std::unique_ptr<Toggle>> reseedToggles, regenToggles;
+    std::vector<juce::String> ids;
+    juce::TextButton done { "DONE" };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SettingsPanel)
+};
+
+//==============================================================================
 class FractalGardenStyledPanel : public juce::Component, private juce::Timer
 {
 public:
@@ -183,6 +213,9 @@ public:
     KnobCard& visibleKnobCard (int slot) { return *knobCards[(std::size_t) (shownMode * 3 + slot)]; }
     bool chanceOpen() const { return chancePanel->isVisible(); }
     void openChance (bool open);
+    bool settingsOpen() const { return settingsPanel->isVisible(); }
+    void openSettings (bool open);
+    juce::Component& settingsComponent() { return *settingsPanel; }      // for the automatic checks
     bool repeatEndsEnabled() const { return repeatEnds.isEnabled() && repeatEnds.isVisible(); }
     bool chanceButtonShown() const { return chanceButton.isVisible(); }
     juce::String headerLine1() const;
@@ -227,6 +260,8 @@ private:
     juce::TextButton repeatEnds { "REPEAT ENDS" };
     std::unique_ptr<ButtonAttachment> repeatEndsAttachment;
     juce::TextButton chanceButton { "CHANCE..." };
+    juce::TextButton settingsButton { "SETTINGS..." };
+    std::unique_ptr<SettingsPanel> settingsPanel;
     juce::Slider rootDial;
     std::unique_ptr<SliderAttachment> rootAttachment;
     std::unique_ptr<ChanceMixPanel> chancePanel;

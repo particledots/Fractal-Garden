@@ -36,7 +36,8 @@ namespace fg
     int degreeToStored (int degree, int scale);      // clamps into the 5-octave range
 
     // The MIDI note (0 to 127) that a stored note plays for a Scale, a Key (0 = C ... 11 = B) and a Root (scale steps, may be negative).
-    int pitchFor (int stored, int scale, int key, int root);
+    // baseNote is the MIDI note of the lowest place at Key C, Root 0 (the settings page's BASE NOTE; the default is kBaseMidiNote).
+    int pitchFor (int stored, int scale, int key, int root, int baseNote = kBaseMidiNote);
 
     // For converting notes saved by versions 0.2.0 / 0.3.0 (which stored plain MIDI notes): the stored place of the nearest degree of C major.
     int nearestMajorStored (int midiNote);

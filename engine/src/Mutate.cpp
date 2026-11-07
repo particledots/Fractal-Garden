@@ -156,7 +156,7 @@ bool microMutate (Step& s, double ratchetChance, double slewChance, double modCh
     return changed;
 }
 
-void reseedSteps (StepData& data, int first, int count, ReseedKind kind, int scale, Rng& rng)
+void reseedSteps (StepData& data, int first, int count, ReseedKind kind, int scale, Rng& rng, unsigned allMask)
 {
     const int lo = std::clamp (first, 0, kNumSteps);
     const int hi = std::clamp (first + count, lo, kNumSteps);
@@ -164,18 +164,18 @@ void reseedSteps (StepData& data, int first, int count, ReseedKind kind, int sca
     for (int i = lo; i < hi; ++i)
     {
         Step& s = data.steps[(std::size_t) i];
-        if (all || kind == ReseedKind::Note)
+        if ((all && (allMask & 1u)) || kind == ReseedKind::Note)
             s.note = (std::uint8_t) degreeToStored (rng.below (degreeCount (scale)), scale);
-        if (all || kind == ReseedKind::Gate)
+        if ((all && (allMask & 2u)) || kind == ReseedKind::Gate)
         {
             s.on = rng.unit() >= 0.2;
             s.gate = (std::uint8_t) kReseedGates[rng.below (9)];
         }
-        if (all || kind == ReseedKind::Slew)
+        if ((all && (allMask & 4u)) || kind == ReseedKind::Slew)
             s.slew = (std::uint8_t) newSlew (rng, 0.7);
-        if (all || kind == ReseedKind::Ratchet)
+        if ((all && (allMask & 8u)) || kind == ReseedKind::Ratchet)
             s.ratchet = (std::uint8_t) (rng.unit() < 0.75 ? 0 : weightedRatchet (rng, false));
-        if (all || kind == ReseedKind::Mod)
+        if ((all && (allMask & 16u)) || kind == ReseedKind::Mod)
         {
             s.mod = (std::uint8_t) rng.below (kModMax + 1);
             s.modShape = (std::uint8_t) rng.below (kNumModShapes);

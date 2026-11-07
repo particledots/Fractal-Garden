@@ -1812,6 +1812,76 @@ int main()
         }
     }
 
+
+    // =====================================================================================================================
+    // Milestone 9: the settings page's CC numbers and base note reach the player (the defaults are the values of 0.7.0)
+    {
+        auto withCc = [] (const std::function<void (fg::PlayerSettings&, long long)>& tweak)
+        {
+            return [=] (long long t) { fg::PlayerSettings st = plainSettings(); st.sendCc = true; tweak (st, t); return st; };
+        };
+        auto makeCcRun = [&] (const std::function<void (fg::PlayerSettings&, long long)>& tweak)
+        {
+            Run r = makeRun (96000);
+            r.data = makeData (50);
+            for (auto& st : r.data.steps) { st.slew = 60; st.mod = 70; st.modShape = 4; st.modRate = 14; }
+            r.settings = withCc (tweak);
+            return r;
+        };
+        // saying the defaults out loud changes nothing (byte for byte the same events)
+        {
+            fg::TrunkPlayer pa, pb;
+            const auto ea = simulate (pa, makeCcRun ([] (fg::PlayerSettings&, long long) {}));
+            const auto eb = simulate (pb, makeCcRun ([] (fg::PlayerSettings& st, long long) { st.slewCc = 84; st.modCc = 1; st.baseNote = 48; }));
+            CHECK (! ea.empty() && sameEvents (ea, eb, 0));
+        }
+        // other numbers: the CCs go out on them (and not on 84 / 1), the notes move with the base note
+        {
+            fg::TrunkPlayer pa, pb;
+            const auto ea = simulate (pa, makeCcRun ([] (fg::PlayerSettings&, long long) {}));
+            const auto eb = simulate (pb, makeCcRun ([] (fg::PlayerSettings& st, long long) { st.slewCc = 20; st.modCc = 21; st.baseNote = 60; }));
+            CHECK (ea.size() == eb.size());
+            int moved = 0, other = 0;
+            for (std::size_t i = 0; i < ea.size() && i < eb.size(); ++i)
+            {
+                CHECK (ea[i].t == eb[i].t && ea[i].on == eb[i].on);
+                if (ea[i].cc < 0)
+                {
+                    CHECK (eb[i].cc < 0 && eb[i].note == ea[i].note + 12);
+                    ++moved;
+                }
+                else
+                {
+                    CHECK (eb[i].value == ea[i].value);
+                    CHECK ((ea[i].cc == 84 && eb[i].cc == 20) || (ea[i].cc == 1 && eb[i].cc == 21));
+                    ++other;
+                }
+                CHECK (eb[i].cc != 84 && eb[i].cc != 1);
+            }
+            CHECK (moved > 8 && other > 0);
+        }
+        // a base note so high that notes would pass 127 stops at 127
+        {
+            fg::TrunkPlayer p;
+            const auto ev = simulate (p, makeCcRun ([] (fg::PlayerSettings& st, long long) { st.baseNote = 96; }));
+            for (const auto& e : ev) if (e.cc < 0) CHECK (e.note >= 96 && e.note <= 127);
+        }
+        // changing the CC numbers while playing: the values go out again on the new numbers straight away, and the old numbers are left alone
+        {
+            fg::TrunkPlayer p;
+            const auto ev = simulate (p, makeCcRun ([] (fg::PlayerSettings& st, long long t) { if (t >= 48000) { st.slewCc = 30; st.modCc = 31; } }));
+            int oldAfter = 0, newBefore = 0, newSlewAfter = 0, newModAfter = 0;
+            for (const auto& e : ev)
+            {
+                if (e.cc == 84 || e.cc == 1) { if (e.t >= 48000 + 512) ++oldAfter; }
+                if (e.cc == 30 || e.cc == 31) { if (e.t < 48000) ++newBefore; }
+                if (e.cc == 30 && e.t >= 48000) ++newSlewAfter;
+                if (e.cc == 31 && e.t >= 48000) ++newModAfter;
+            }
+            CHECK (oldAfter == 0 && newBefore == 0 && newSlewAfter > 0 && newModAfter > 0);
+        }
+    }
+
     std::printf ("clock tests: %d checks passed\n", checks - failures);
     if (failures > 0)
     {
