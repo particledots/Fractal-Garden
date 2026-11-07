@@ -4,7 +4,7 @@ An original AU / VST3 **MIDI effect** for Logic Pro, inspired by the feel of a E
 sequencer (the Qu-Bit Electronix Bloom v2): 64 steps, branches that grow from a trunk, and knobs that mutate the pattern. All code is
 our own; it is not a port or copy of anything, and it is not affiliated with Qu-Bit Electronix.
 
-**Status: version 0.2.0 (milestone 2: the first build with the styled panel). Built by GitHub Actions; not yet tested in Logic on either test Mac, so milestone 2 is NOT finished until it has been.**
+**Status: version 0.2.0 (milestone 2: the first build with the styled panel). 0.2.0 was tested in Logic on both test Macs (M4 Mac mini, Logic 11.2.2; Intel Mac, macOS 12.7.8, Logic 10.7.8) on 7 November 2026: every check passed and the window matched the approved pictures, so milestone 2 is finished.**
 **Nothing plays yet.** The window draws, the controls move and are saved with the Logic project, and the step editor shows (and lets you edit) a sample pattern that is also saved. MIDI that arrives from Logic passes through unchanged; the plugin adds no notes of its own. The sequencer starts in milestone 3.
 
 ## First five minutes (after installing, see *Getting the plugin*)
@@ -34,7 +34,7 @@ The step editor (tabs, Mod Out chips, page chips, an overview of all 64 steps, e
 - Engine self-test: 834 checks (control table, menus, note names, step-data save / load and rejection of damaged data).
 - Window test on a Linux computer: 189 checks (all 46 controls exist once in each window, switching windows, saving and reloading controls / steps / tab / page / window, momentary buttons popping back, Knob Mode titles and colours, the Order slot, the Chance pop-over, no MIDI added). Pictures drawn from the real window were compared with pictures A, B and C.
 - GitHub Actions: engine test, macOS build (universal Apple Silicon + Intel), auval, pluginval level 5 (see CHANGELOG for the result of the run).
-- **Not yet tested:** Logic Pro on the M4 Mac mini (Logic 11.2.2) and the Intel Mac (macOS 12.7.8, Logic 10.7.8).
+- **Tested in Logic on 7 November 2026, both Macs (M4 Mac mini, Logic 11.2.2; Intel Mac, macOS 12.7.8, Logic 10.7.8):** installs, appears in the MIDI FX slot as Fractal-Garden, window matches pictures A, B and C, controls / tabs / pages / step edits / Knob Mode / Order slot / Chance pop-over / Plain Sliders work, 46 parameters listed, everything is restored after saving and reopening a project.
 
 ## What changed in 0.2.0
 
