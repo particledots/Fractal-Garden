@@ -1,5 +1,6 @@
 #include "StyledPanel.h"
 
+#include <fg/Mod.h>
 #include <fg/Steps.h>
 
 #include <cmath>
@@ -94,30 +95,17 @@ namespace
         return c[juce::jlimit (0, 2, mode)];
     }
 
-    // Our own eight Mod shapes (0 sine, 1 triangle, 2 ramp up, 3 ramp down, 4 square, 5 pulse, 6 pluck, 7 stairs), as in the mockup.
-    double shapeValue (int shape, double t)
+    // What a step's Mod output does over the step in Shapes mode (the engine's own curve: shape and rate together, an OFF step is flat 0).
+    void drawShape (juce::Graphics& g, const fg::Step& step, float x, float y, float w, float h, juce::Colour colour)
     {
-        switch (shape)
-        {
-            case 0:  return 0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi * t);
-            case 1:  return 1.0 - std::abs (2.0 * t - 1.0);
-            case 2:  return t;
-            case 3:  return 1.0 - t;
-            case 4:  return t < 0.5 ? 1.0 : 0.0;
-            case 5:  return t < 0.25 ? 1.0 : 0.0;
-            case 6:  return std::exp (-4.0 * t);
-            default: return std::min (3.0, std::floor (t * 4.0)) / 3.0;
-        }
-    }
-
-    void drawShape (juce::Graphics& g, int shape, float x, float y, float w, float h, juce::Colour colour)
-    {
+        fg::Step shown = step;
+        shown.on = true;                    // an OFF step is drawn as its curve, dimmed by the caller's colour
         juce::Path p;
-        const int n = 80;
+        const int n = 96;
         for (int k = 0; k <= n; ++k)
         {
             const double t = (double) k / n;
-            const double v = shapeValue (shape, std::min (t, 0.9999));
+            const double v = fg::shapesModValue (shown, std::min (t, 0.9999));
             const float px = x + (float) t * w, py = y + h - (float) v * h;
             if (k == 0) p.startNewSubPath (px, py); else p.lineTo (px, py);
         }
@@ -266,7 +254,7 @@ double StepEditor::overviewFraction (const fg::Step& s, int tabIndex) const
         case 0:  return fg::storedToDegree (s.note, scaleIndex()) / (double) juce::jmax (1, fg::degreeCount (scaleIndex()) - 1);
         case 1:  return s.gate / (double) fg::kGateMax;
         case 2:  return s.slew / (double) fg::kSlewMax;
-        case 3:  return s.ratchet / (double) fg::kRatchetMax;
+        case 3:  return s.ratchet / (double) fg::kRatchetMax;      // the place in the list x1 x2 x3 x4 x6 x8 x16 x32
         default: return modMode() == 0 ? (s.modShape + 1) / (double) fg::kNumModShapes : s.mod / (double) fg::kModMax;
     }
 }
@@ -346,7 +334,7 @@ void StepEditor::paint (juce::Graphics& g)
             if (tb == 4 && shapesMode)
             {
                 const juce::Colour col = on ? tabCol : mixColours (tabCol, background, 0.75f);
-                drawShape (g, st.modShape, x + 16.0f, 216.0f, 96.0f, 58.0f, col);
+                drawShape (g, st, x + 16.0f, 216.0f, 96.0f, 58.0f, col);
                 drawAt (g, on ? fg::kModRateCaptions[st.modRate] : "0 V", x + 64.0f, 294.0f, mono (11.5f),
                         on ? muted : mixColours (muted, background, 0.5f), anchorMiddle);
                 readout = fg::kModShapeNames[st.modShape];
@@ -367,7 +355,7 @@ void StepEditor::paint (juce::Graphics& g)
                     case 0:  fg::noteName (fg::pitchFor (st.note, scaleIndex(), keyIndex(), rootValue()), nm, sizeof nm); readout = nm; break;
                     case 1:  readout = juce::String (st.gate) + " %"; break;
                     case 2:  readout = juce::String (st.slew) + " %"; break;
-                    case 3:  readout = "x" + juce::String (st.ratchet); break;
+                    case 3:  readout = "x" + juce::String (fg::kRatchetAmounts[juce::jlimit (0, fg::kRatchetMax, (int) st.ratchet)]); break;
                     default: readout = juce::String (st.mod) + " %"; break;
                 }
             }
@@ -416,7 +404,7 @@ void StepEditor::setValue (int stepIndex, int tabIndex, float fraction)
         case 0:  s.note = (std::uint8_t) fg::degreeToStored (roundedInt (f * (float) (fg::degreeCount (scaleIndex()) - 1)), scaleIndex()); break;
         case 1:  s.gate = (std::uint8_t) roundedInt (f * (float) fg::kGateMax); break;
         case 2:  s.slew = (std::uint8_t) roundedInt (f * (float) fg::kSlewMax); break;
-        case 3:  s.ratchet = (std::uint8_t) (1 + roundedInt (f * (float) (fg::kRatchetMax - 1))); break;
+        case 3:  s.ratchet = (std::uint8_t) roundedInt (f * (float) fg::kRatchetMax); break;
         default: s.mod = (std::uint8_t) roundedInt (f * (float) fg::kModMax); break;
     }
     proc.setStep (stepIndex, s);
@@ -469,10 +457,14 @@ void StepEditor::mouseDown (const juce::MouseEvent& e)
         if (juce::Rectangle<int> (x, 340, 128, 28).contains (p)) { toggleStep (s); return; }
         if (juce::Rectangle<int> (x, 198, 128, 110).contains (p))
         {
-            if (tab() == 4 && modMode() == 0)             // Mod, Shapes: a click goes to the next shape
-            {
+            if (tab() == 4 && modMode() == 0)             // Mod, Shapes: a click goes to the next shape; the caption strip at the bottom, to the next rate
+            {                                             // (shift or right click goes back one)
                 auto st = proc.getSteps().steps[(std::size_t) s];
-                st.modShape = (std::uint8_t) ((st.modShape + 1) % fg::kNumModShapes);
+                const int dir = (e.mods.isShiftDown() || e.mods.isPopupMenu()) ? -1 : 1;
+                if (p.y >= 280)
+                    st.modRate = (std::uint8_t) ((st.modRate + dir + fg::kNumModRates) % fg::kNumModRates);
+                else
+                    st.modShape = (std::uint8_t) ((st.modShape + dir + fg::kNumModShapes) % fg::kNumModShapes);
                 proc.setStep (s, st);
                 repaint();
             }
@@ -507,8 +499,18 @@ int StepEditor::stepUnder (juce::Point<int> p) const
 void StepEditor::mouseDoubleClick (const juce::MouseEvent& e)
 {
     const int s = stepUnder (e.getPosition() + juce::Point<int> (kX, kY));
-    if (s < 0 || (tab() == 4 && modMode() == 0))
+    if (s < 0)
         return;
+    if (tab() == 4 && modMode() == 0)         // Shapes: a double click puts the shape and the rate back to their defaults
+    {
+        auto st = proc.getSteps().steps[(std::size_t) s];
+        const fg::Step defaults;
+        st.modShape = defaults.modShape;
+        st.modRate = defaults.modRate;
+        proc.setStep (s, st);
+        repaint();
+        return;
+    }
     resetValue (s, tab());
 }
 

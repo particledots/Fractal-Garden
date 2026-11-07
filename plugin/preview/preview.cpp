@@ -357,6 +357,12 @@ int main (int argc, char** argv)
             p->setPlayConfigDetails (0, 0, sr, 512);
             p->prepareToPlay (sr, 512);
             p->setPlayHead (&host);
+            for (int i = 0; i < fg::kNumSteps; ++i)                // milestone 3 and 4 checks are about plain notes: no slew, no ratchet, no tie
+            {
+                fg::Step q = p->getSteps().steps[(std::size_t) i];
+                q.slew = 0; q.ratchet = 0; q.gate = (std::uint8_t) juce::jmin ((int) q.gate, 90);
+                p->setStep (i, q);
+            }
             fg::Step s1 = p->getSteps().steps[1];                  // step 2 certainly plays, with a gate long enough to be sounding at 7168 samples
             s1.on = true; s1.gate = 80;
             p->setStep (1, s1);
@@ -385,6 +391,7 @@ int main (int argc, char** argv)
                 for (auto meta : midi)
                 {
                     const auto m = meta.getMessage();
+                    if (m.isController()) continue;                  // CC 84 and CC 1 (milestone 5) are checked on their own below
                     out.push_back ({ clock + meta.samplePosition, m.isNoteOn(), m.getNoteNumber(), m.getChannel(), m.getVelocity(), m.isAllNotesOff() });
                 }
             }
@@ -609,7 +616,7 @@ int main (int argc, char** argv)
             for (int i = 0; i < 8; ++i)                                  // eight steps, all on, each with its own place in the scale
             {
                 fg::Step s = p->getSteps().steps[(std::size_t) i];
-                s.on = true; s.gate = 50; s.note = (std::uint8_t) (12 + i % 7);
+                s.on = true; s.gate = 50; s.slew = 0; s.ratchet = 0; s.note = (std::uint8_t) (12 + i % 7);
                 p->setStep (i, s);
             }
             return p;
@@ -821,6 +828,59 @@ int main (int argc, char** argv)
         const bool before = p.getSteps().steps[0].on;
         se.toggleStep (0);
         expect (p.getSteps().steps[0].on == ! before, "toggling a step changes the data");
+    }
+
+    // ---- milestone 5: Resize, CC output, the ratchet list, Mod rates ----
+    {
+        FractalGardenProcessor p;
+        p.setPlayConfigDetails (0, 0, 48000.0, 512);
+        setParam (p, fg::id::length, 8);
+        const auto before = p.getSteps();
+        setParam (p, fg::id::resizeShrink, 1);
+        letWindowThreadRun (200);
+        expect (juce::roundToInt (getParam (p, fg::id::length)) == 4 && p.getSteps().steps[1] == before.steps[2] && p.getSteps().steps[3] == before.steps[6],
+                "SHRINK halves LENGTH and keeps every other step");
+        letWindowThreadRun (300);
+        expect (getParam (p, fg::id::resizeShrink) < 0.5f && juce::roundToInt (getParam (p, fg::id::length)) == 4, "SHRINK pops back and acted once");
+        setParam (p, fg::id::resizeExpand, 1);
+        letWindowThreadRun (200);
+        expect (juce::roundToInt (getParam (p, fg::id::length)) == 8 && p.getSteps().steps[2] == before.steps[2] && ! p.getSteps().steps[3].on,
+                "EXPAND doubles LENGTH, each step followed by an OFF copy");
+        letWindowThreadRun (300);
+
+        FractalGardenEditor editor (p);
+        editor.setSize (1080, 720);
+        auto& se = editor.getStyledPanel()->getStepEditor();
+        setParam (p, fg::id::length, 16);
+        se.setValue (0, 3, 1.0f);   expect (p.getSteps().steps[0].ratchet == fg::kRatchetMax, "the top of the Ratchet box is the last in the list (x32)");
+        se.setValue (0, 3, 0.0f);   expect (p.getSteps().steps[0].ratchet == 0, "the bottom of the Ratchet box is x1");
+        se.resetValue (0, 3);       expect (p.getSteps().steps[0].ratchet == fg::Step().ratchet, "a double click puts the ratchet back to x1");
+    }
+    {   // the notes come with CC 84 and CC 1 in front of them
+        MockHost host;
+        FractalGardenProcessor p;
+        p.setPlayConfigDetails (0, 0, 48000.0, 512);
+        p.prepareToPlay (48000.0, 512);
+        p.setPlayHead (&host);
+        juce::AudioBuffer<float> audio (0, 512);
+        juce::MidiBuffer first;
+        host.playing = false;
+        p.processBlock (audio, first);
+        bool sawCc1 = false, ccBeforeNote = true, sawNote = false;
+        for (int b = 0; b < 40; ++b)
+        {
+            host.playing = true;
+            host.ppq = (double) (b * 512) * 120.0 / 60.0 / 48000.0;
+            juce::MidiBuffer midi;
+            p.processBlock (audio, midi);
+            for (auto meta : midi)
+            {
+                const auto m = meta.getMessage();
+                if (m.isController() && m.getControllerNumber() == 1) sawCc1 = true;
+                if (m.isNoteOn() && ! sawNote) { sawNote = true; ccBeforeNote = sawCc1; }
+            }
+        }
+        expect (sawNote && sawCc1 && ccBeforeNote, "the first note is preceded by CC 1 (the Mod output)");
     }
 
     std::cout << "preview checks: " << (checks - failures) << " of " << checks << " passed" << std::endl;

@@ -1,14 +1,17 @@
 // Engine self-test (milestones 2 and 4): checks the 46 controls against the approved control list, written out here a second time
 // (id, kind, range, default) so a slip in Params.h is caught, then the menus, the step data and its saved form, and (milestone 4) the
-// 28 scales, the pitch a stored note plays, the 11 play orders, Rotate and Transpose.
+// 28 scales, the pitch a stored note plays, the 11 play orders, Rotate and Transpose, and (milestone 5) the ratchet list, the sixteen Mod
+// rates, the four Mod modes' curves, Resize and the conversion of older saved projects.
 // Prints "engine tests: N checks passed" and exits 0, or lists every failure and exits 1.
 
+#include <fg/Mod.h>
 #include <fg/Orders.h>
 #include <fg/Params.h>
 #include <fg/Pitch.h>
 #include <fg/Steps.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -116,7 +119,7 @@ int main()
     {
         CHECK (s.note >= fg::kNoteMin && s.note <= fg::kNoteMax);
         CHECK (s.gate <= fg::kGateMax && s.slew <= fg::kSlewMax && s.mod <= fg::kModMax);
-        CHECK (s.ratchet >= 1 && s.ratchet <= fg::kRatchetMax);
+        CHECK (s.ratchet <= fg::kRatchetMax);
         CHECK (s.modShape < fg::kNumModShapes && s.modRate < fg::kNumModRates);
     }
     CHECK (sample.steps[0].note == fg::nearestMajorStored (74) && sample.steps[1].note == fg::nearestMajorStored (81) && sample.steps[15].note == fg::nearestMajorStored (79));       // picture A
@@ -242,7 +245,7 @@ int main()
         CHECK (d.steps[0].note == 12 && d.steps[2].note == 13 && d.steps[4].note == 14 && d.steps[11].note == 18);
         CHECK (d.steps[0].gate == 40 && ! d.steps[0].on && d.steps[1].on);
         const auto v2 = d.toBytes();
-        CHECK (v2[0] == 2 && v2.size() == v1.size());                    // saved again in the new format
+        CHECK (v2[0] == 3 && v2.size() == v1.size());                    // saved again in the new format
         fg::StepData again;
         CHECK (again.fromBytes (v2.data(), v2.size()) && again == d);
     }
@@ -442,6 +445,145 @@ int main()
             }
             CHECK (pagesOk && pageSeen[0] > 40 && pageSeen[1] > 40 && pageSeen[2] > 40);
         }
+    }
+
+    // =====================================================================================================================
+    // Milestone 5: ratchet list, gate range, Mod rates and curves, Resize, converting older saved data
+    {
+        // the ratchet amounts are the manual's list
+        CHECK (fg::kNumRatchets == 8 && fg::kRatchetMax == 7);
+        const int expectAmounts[8] = { 1, 2, 3, 4, 6, 8, 16, 32 };
+        for (int i = 0; i < 8; ++i) CHECK (fg::kRatchetAmounts[i] == expectAmounts[i]);
+        CHECK (fg::Step().ratchet == 0 && fg::Step().gate == 50);
+
+        // clamping: gate 5 to 100, ratchet index 0 to 7, Mod rate 0 to 15
+        fg::Step s; s.gate = 0; s.ratchet = 99; s.modRate = 99; s.slew = 250; s.mod = 250; s.clamp();
+        CHECK (s.gate == fg::kGateMin && fg::kGateMin == 5 && s.ratchet == 7 && s.modRate == 15 && s.slew == 100 && s.mod == 100);
+        s.gate = 200; s.clamp(); CHECK (s.gate == 100);
+
+        // the sixteen Mod rates, in the manual's order
+        CHECK (fg::kNumModRates == 16);
+        const struct { int kind, n, part; } rates[16] = {
+            { fg::kRateOneShot, 1, 0 }, { fg::kRateOneShot, 2, 0 }, { fg::kRateRatchet, 2, 0 }, { fg::kRateOneShot, 3, 0 },
+            { fg::kRateRatchet, 3, 0 }, { fg::kRateOneShot, 4, 0 }, { fg::kRateRatchet, 4, 0 }, { fg::kRateRatchet, 8, 0 },
+            { fg::kRatePart, 2, 0 }, { fg::kRatePart, 2, 1 }, { fg::kRatePart, 4, 0 }, { fg::kRatePart, 4, 1 },
+            { fg::kRatePart, 4, 2 }, { fg::kRatePart, 4, 3 }, { fg::kRateFixed, 1, 0 }, { fg::kRateFixed, 1, 1 } };
+        for (int i = 0; i < 16; ++i)
+        {
+            const auto r = fg::modRateInfo (i);
+            CHECK ((int) r.kind == rates[i].kind && r.n == rates[i].n && r.part == rates[i].part);
+            CHECK (std::strlen (fg::kModRateCaptions[i]) > 0 && std::strlen (fg::kModRateCaptions[i]) <= 15);      // fits under a step
+        }
+
+        // the eight shapes: starts, ends, and all stay inside 0 to 1
+        for (int shape = 0; shape < 8; ++shape)
+            for (int k = 0; k <= 100; ++k)
+            {
+                const double v = fg::modShapeValue (shape, k / 100.0);
+                CHECK (v >= 0.0 && v <= 1.0);
+            }
+        CHECK (fg::modShapeValue (0, 0.0) < 1e-9 && std::fabs (fg::modShapeValue (0, 0.5) - 1.0) < 1e-9);              // sine
+        CHECK (std::fabs (fg::modShapeValue (1, 0.5) - 1.0) < 1e-9 && fg::modShapeValue (1, 0.0) == 0.0);             // triangle
+        CHECK (fg::modShapeValue (2, 0.25) == 0.25 && fg::modShapeValue (3, 0.25) == 0.75);                           // ramps
+        CHECK (fg::modShapeValue (4, 0.1) == 1.0 && fg::modShapeValue (4, 0.6) == 0.0);                               // square
+        CHECK (fg::modShapeValue (5, 0.1) == 1.0 && fg::modShapeValue (5, 0.3) == 0.0);                               // pulse
+        CHECK (fg::modShapeValue (6, 0.0) == 1.0 && fg::modShapeValue (6, 0.9) < fg::modShapeValue (6, 0.1));         // pluck
+        CHECK (fg::modShapeValue (7, 0.0) == 0.0 && fg::modShapeValue (7, 0.99) == 1.0);                              // stairs
+
+        // Shapes mode: an OFF step is 0; x2 ratchet repeats; one-shot holds the last value; halves stretch; fixed levels
+        fg::Step m; m.on = true; m.modShape = 2;                                                                      // ramp up
+        m.modRate = 0;  CHECK (fg::shapesModValue (m, 0.5) == 0.5);                                                   // x1
+        m.modRate = 2;  CHECK (std::fabs (fg::shapesModValue (m, 0.25) - 0.5) < 1e-9 && std::fabs (fg::shapesModValue (m, 0.75) - 0.5) < 1e-9);   // x2 ratchet
+        m.modRate = 1;  CHECK (std::fabs (fg::shapesModValue (m, 0.25) - 0.5) < 1e-9 && fg::shapesModValue (m, 0.9) > 0.99);                        // x2 one-shot holds
+        m.modRate = 8;  CHECK (std::fabs (fg::shapesModValue (m, 1.0) - 0.5) < 1e-3 && fg::shapesModValue (m, 0.0) == 0.0);                          // 1/2 first half
+        m.modRate = 9;  CHECK (std::fabs (fg::shapesModValue (m, 0.0) - 0.5) < 1e-9 && fg::shapesModValue (m, 1.0) > 0.99);                          // 1/2 second half
+        m.modRate = 13; CHECK (std::fabs (fg::shapesModValue (m, 0.0) - 0.75) < 1e-9);                                                               // 1/4 fourth quarter
+        m.modRate = 14; m.modShape = 0; CHECK (fg::shapesModValue (m, 0.3) == 0.0);                                    // fixed 0-2.5 V, lowest level
+        m.modShape = 7; CHECK (std::fabs (fg::shapesModValue (m, 0.3) - 0.5) < 1e-9);                                  // highest level of the lower half
+        m.modRate = 15; m.modShape = 0; CHECK (std::fabs (fg::shapesModValue (m, 0.3) - 0.5) < 1e-9);                   // fixed 2.5-5 V, lowest level
+        m.modShape = 7; CHECK (std::fabs (fg::shapesModValue (m, 0.3) - 1.0) < 1e-9 && ! fg::shapesModMoves (m));      // top level; constant
+        m.modRate = 6; CHECK (fg::shapesModMoves (m));
+        m.on = false;  CHECK (fg::shapesModValue (m, 0.5) == 0.0 && ! fg::shapesModMoves (m));
+
+        // Envelope: 0 % instant attack, 50 % equal, 100 % long attack and an instant drop
+        CHECK (fg::envelopeModValue (0, 0.0) == 1.0 && std::fabs (fg::envelopeModValue (0, 0.5) - 0.5) < 1e-9 && fg::envelopeModValue (0, 1.0) == 0.0);
+        CHECK (fg::envelopeModValue (50, 0.0) == 0.0 && fg::envelopeModValue (50, 0.5) == 1.0 && fg::envelopeModValue (50, 1.0) == 0.0);
+        CHECK (fg::envelopeModValue (100, 0.0) == 0.0 && std::fabs (fg::envelopeModValue (100, 0.5) - 0.5) < 1e-9 && fg::envelopeModValue (100, 1.0) == 1.0);
+        // Smooth and levels
+        CHECK (fg::smoothModValue (0.2, 0.8, 0.0) == 0.2 && std::fabs (fg::smoothModValue (0.2, 0.8, 0.5) - 0.5) < 1e-9 && std::fabs (fg::smoothModValue (0.2, 0.8, 1.0) - 0.8) < 1e-9);
+        fg::Step lv; lv.mod = 50; lv.on = true; CHECK (fg::stepLevel (lv) == 0.5); lv.on = false; CHECK (fg::stepLevel (lv) == 0.0);
+        CHECK (fg::modToCc (0.0) == 0 && fg::modToCc (1.0) == 127 && fg::modToCc (0.5) == 64 && fg::modToCc (-3.0) == 0 && fg::modToCc (9.0) == 127);
+        CHECK (fg::kModCc == 1 && fg::kSlewCc == 84);
+    }
+
+    {
+        // Resize
+        fg::StepData d;
+        for (int i = 0; i < 64; ++i) { d.steps[(std::size_t) i].note = (std::uint8_t) i; d.steps[(std::size_t) i].on = true; }
+        int len = 8;
+        CHECK (fg::resizeShrink (d, len) && len == 4);                                                                // 8 to 4: steps 1, 3, 5, 7 kept
+        CHECK (d.steps[0].note == 0 && d.steps[1].note == 2 && d.steps[2].note == 4 && d.steps[3].note == 6 && d.steps[4].note == 4);   // past the new length: left as it was
+        CHECK (fg::resizeShrink (d, len) && len == 2 && d.steps[0].note == 0 && d.steps[1].note == 4);
+        CHECK (fg::resizeShrink (d, len) && len == 1 && d.steps[0].note == 0);
+        CHECK (! fg::resizeShrink (d, len) && len == 1);                                                              // nothing below one step
+
+        fg::StepData e;
+        for (int i = 0; i < 64; ++i) { e.steps[(std::size_t) i].note = (std::uint8_t) i; e.steps[(std::size_t) i].on = true; }
+        int len2 = 7;
+        CHECK (fg::resizeShrink (e, len2) && len2 == 4 && e.steps[3].note == 6);                                       // 7 to 4, rounded up
+
+        fg::StepData x;
+        for (int i = 0; i < 8; ++i) { x.steps[(std::size_t) i].note = (std::uint8_t) (10 + i); x.steps[(std::size_t) i].gate = (std::uint8_t) (20 + i); x.steps[(std::size_t) i].on = i != 3; }
+        int lx = 8;
+        CHECK (fg::resizeExpand (x, lx) && lx == 16);                                                                 // Spread: originals on 1, 3, 5 ..., gaps OFF
+        bool spread = true;
+        for (int i = 0; i < 8; ++i)
+        {
+            spread = spread && x.steps[(std::size_t) (2 * i)].note == 10 + i && x.steps[(std::size_t) (2 * i)].gate == 20 + i;
+            spread = spread && x.steps[(std::size_t) (2 * i)].on == (i != 3) && ! x.steps[(std::size_t) (2 * i + 1)].on;
+            spread = spread && x.steps[(std::size_t) (2 * i + 1)].note == 10 + i;
+        }
+        CHECK (spread);
+        CHECK (fg::resizeExpand (x, lx) && lx == 32 && fg::resizeExpand (x, lx) && lx == 64);
+        CHECK (! fg::resizeExpand (x, lx) && lx == 64);                                                               // nothing past 64
+        fg::StepData y; int ly = 33;
+        CHECK (! fg::resizeExpand (y, ly) && ly == 33);                                                               // doubling would pass 64: refused
+        ly = 32; CHECK (fg::resizeExpand (y, ly) && ly == 64);
+        // shrink then expand: the kept steps are where they were, the others are gaps
+        fg::StepData z; for (int i = 0; i < 8; ++i) { z.steps[(std::size_t) i].note = (std::uint8_t) i; z.steps[(std::size_t) i].on = true; }
+        int lz = 8; fg::resizeShrink (z, lz); fg::resizeExpand (z, lz);
+        CHECK (lz == 8 && z.steps[0].note == 0 && z.steps[2].note == 2 && z.steps[4].note == 4 && z.steps[6].note == 6 && z.steps[0].on && ! z.steps[1].on && ! z.steps[7].on);
+    }
+
+    {
+        // Saved data: version 3 round trip, and projects from 0.2.0 to 0.4.0 (ratchet as a count, eight Mod rates) are converted
+        fg::StepData d = fg::StepData::makeSample();
+        d.steps[5].ratchet = 7; d.steps[5].modRate = 15; d.steps[5].gate = 5;
+        const auto bytes = d.toBytes();
+        fg::StepData back;
+        CHECK (bytes[0] == 3 && back.fromBytes (bytes.data(), bytes.size()) && back == d);
+
+        std::vector<std::uint8_t> v2;
+        v2.push_back (2); v2.push_back (8);
+        const int oldRatchet[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+        const int oldRate[8]    = { 0, 1, 2, 3, 4, 5, 6, 7 };
+        for (int i = 0; i < 8; ++i)
+        {
+            v2.push_back (12); v2.push_back (0); v2.push_back (30); v2.push_back ((std::uint8_t) oldRatchet[i]);
+            v2.push_back (40); v2.push_back (3); v2.push_back ((std::uint8_t) oldRate[i]); v2.push_back (1);
+        }
+        fg::StepData c;
+        CHECK (c.fromBytes (v2.data(), v2.size()));
+        const int newRatchet[8] = { 0, 1, 2, 3, 3, 4, 4, 5 };        // x1 x2 x3 x4, 5 -> x4, x6, 7 -> x6, x8
+        const int newRate[8]    = { 0, 1, 5, 2, 6, 8, 3, 0 };        // x1, x2 one-shot, x4 one-shot, x2 ratchet, x4 ratchet, 1/2 first half, x3 one-shot, x1
+        bool conv = true;
+        for (int i = 0; i < 8; ++i)
+            conv = conv && c.steps[(std::size_t) i].ratchet == newRatchet[i] && c.steps[(std::size_t) i].modRate == newRate[i]
+                        && c.steps[(std::size_t) i].gate == fg::kGateMin && c.steps[(std::size_t) i].slew == 30 && c.steps[(std::size_t) i].mod == 40;
+        CHECK (conv);
+        v2[0] = 1;                                                       // version 1 too (MIDI notes, converted as before)
+        fg::StepData c1;
+        CHECK (c1.fromBytes (v2.data(), v2.size()) && c1.steps[7].ratchet == 5 && c1.steps[7].modRate == 0);
     }
 
     std::printf ("engine tests: %d checks passed\n", checks - failures);

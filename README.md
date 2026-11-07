@@ -4,8 +4,8 @@ An original AU / VST3 **MIDI effect** for Logic Pro, inspired by the feel of a E
 sequencer (the Qu-Bit Electronix Bloom v2): 64 steps, branches that grow from a trunk, and knobs that mutate the pattern. All code is
 our own; it is not a port or copy of anything, and it is not affiliated with Qu-Bit Electronix.
 
-**Status: version 0.4.0 (milestone 4: trunk editing and the pitch controls). Tested in Logic on 7 November 2026: everything worked as expected and as described, and it is finished.** Milestone 3 (0.3.0) was tested in Logic on both test Macs (M4 Mac mini, Logic 11.2.2; Intel Mac, macOS 12.7.8, Logic 10.7.8) on 7 November 2026: every check passed and it is finished. Its one experiment showed that Logic does not call a MIDI effect while stopped (test notes 0 sent of 18 and 0 of 28 asked), so the MIDI version only sounds while Logic plays.
-**The trunk now has its pitch controls and all eleven orders.** LENGTH, SCALE (28) and KEY, ORDER (11), REPEAT ENDS, CHANCE... , ROOT, ROTATE, TRANSPOSE, RESET and the page chips work, and you can edit steps by scale degree. The temporary test aids from 0.3.0 (clickable STEP lamp, test note, counters) are gone. Branches, Path, Mutate, ratchet, slew and mod still only move and are saved; they start working in later milestones.
+**Status: version 0.5.0 (milestone 5: gate length with ties, ratchet, slew, mod and resize). Built and checked by the automatic tests; NOT YET TESTED IN LOGIC.** Milestone 4 (0.4.0) was tested in Logic on 7 November 2026: everything worked as expected and as described, and it is finished.
+**The trunk now plays with gate lengths and ties, ratchets, slew and the Mod output.** Gate Length (5 % to 100 %; 100 % ties to the next step), Ratchet (x1 x2 x3 x4 x6 x8 x16 x32), Slew (sent as MIDI CC 84), Mod (four modes, sent as CC 1, at most 100 CC messages a second) and the Resize buttons (SHRINK / EXPAND) work. Branches, Path and Mutate still only move and are saved; they start working in later milestones.
 
 ## First five minutes (after installing, see *Getting the plugin*)
 
@@ -42,12 +42,27 @@ The step editor (tabs, Mod Out chips, page chips, an overview of all 64 steps, e
 - The ranges of Gate, Slew, Ratchet and Mod, the eight Mod captions, and the wording under each knob are **first guesses**; where the Bloom v2 manual is vague (for example the exact Performance zones) we approximate and will tune it with you.
 - Window and tab choices are saved in the project but are not controls (no automation).
 
+## New in 0.5.0 (how it behaves)
+
+- **Gate Length.** 5 % to 100 % of the step. At **100 % the step is tied to the next one**: the next note starts first and the old one ends at the same moment right after it, so a mono synth plays legato. If the next step has the same pitch there is no new note at all. A tie into an OFF step ends where that step starts. A ratcheted step is never tied.
+- **Ratchet.** x1 x2 x3 x4 x6 x8 x16 x32: the step is split into that many equal slots with a note of half a slot in each (never shorter than 1 ms). The gate length does not apply to a ratcheted step.
+- **Slew (CC 84).** At the start of each step that plays, CC 84 carries the step's Slew (0 to 100 % as 0 to 127), before the note, only when the value changed. A step whose next step has Slew above 0 is held open to it (like a tie) so a mono synth can glide into it. You may need to map CC 84 to your synth's glide time (in Logic's Smart Controls or the synth's own MIDI learn).
+- **Mod (CC 1).** Shapes: one of our 8 shapes at one of 16 rates (click the upper part of a step's box for the next shape, the caption strip at the bottom for the next rate; shift or right click goes back; double-click resets both). Velocity: a fixed level for the whole step, which is also the note velocity. Envelope: a triangle whose peak sits at the Mod value. Smooth: a straight glide from the previous step's level to this step's. Moving values are sampled every 10 ms and only changes are sent; CC 84 and CC 1 together never exceed 100 messages in any one second.
+- **Resize.** SHRINK halves LENGTH (rounded up) and keeps steps 1, 3, 5...; EXPAND doubles LENGTH (not above 64): each step is followed by a copy of itself set to OFF. LENGTH follows. There is no undo until Unmutate (milestone 7).
+- **Where the Bloom v2 manual is vague, and what we did:** every instance is listed with a number in the file "Fractal-Garden manual gaps ledger" in the project (G-34 onwards are new in this milestone).
+- Older saved projects open: step data format version 3 converts versions 1 and 2 on load (old ratchet counts go to the nearest amount of the list; old Mod rates to the nearest of the 16).
+
 ## What has been checked
 
-- Engine self-test: 1,214 checks (control table, menus, the 28 scales and pitch, step data save / load, reading old 0.2.0 / 0.3.0 data, rotate, transpose, all eleven orders: shapes, repeat, determinism and seeds).
+- Version 0.5.0 automatic checks: engine 2,111; clock 1,002,337 (ties, every ratchet amount at several block sizes, CC 84 and CC 1 values and order, all four Mod modes, the 100 a second cap, identical output for block sizes 1 to 8192, stop / start). The GitHub run result is in the CHANGELOG. Not yet tested in Logic.
+- Earlier (0.4.0): engine self-test: 1,214 checks (control table, menus, the 28 scales and pitch, step data save / load, reading old 0.2.0 / 0.3.0 data, rotate, transpose, all eleven orders: shapes, repeat, determinism and seeds).
 - Clock self-test: 575,208 checks. Everything from 0.3.0 (all RATEs and RATIOs, block sizes 1 to 8192, 44.1 to 96 kHz, tempos, count-in, stop / start, relocate, cycle, time signatures, two instances) plus every order across several block sizes, the shown step in every order, SCALE / KEY / ROOT, and RESET (once, twice, from the start, while stopped, after a jump, after stop and start), and two instances in every order staying in step.
 - Window and plugin test on a Linux computer: 246 checks (the milestone 3 checks, adapted, plus: no test aids left; SCALE / KEY / ROOT re-pitch the notes without changing steps; Reverse, Converge, Pendulum and Chance mix in the playing plugin; ROTATE and TRANSPOSE both ways, once per press; RESET; loading a project does not press buttons; the order seed is saved and old projects get one; page chips follow LENGTH; step editing by degree, double-click reset, no editing beyond LENGTH).
 - **Tested in Logic (7 November 2026):** everything worked as expected and as described (SCALE, KEY, ROOT, the eleven orders, ROTATE, TRANSPOSE, RESET, page chips and step editing). Milestone 3 was tested on both Macs on the same day, everything passed.
+
+## What changed in 0.5.0
+
+New engine file `fg/Mod.h` / `Mod.cpp` (the Mod curves, CC numbers); the trunk player now handles ties, ratchets, CC 84 and CC 1 and the 100-a-second cap; the saved step format is version 3 (ratchet is a place in the list of eight, 16 Mod rates; old data is converted); the plugin outputs the CC messages, wires SHRINK / EXPAND, and the editor shows the ratchet list, the 16 Mod rates and the real curve of each step. No new controls; all 46 ids are unchanged. See CHANGELOG.
 
 ## What changed in 0.4.0
 

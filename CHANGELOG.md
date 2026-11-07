@@ -3,6 +3,18 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
+Version 0.5.0 (milestone 5, gate length with ties, ratchet, slew, mod and resize; **not yet tested in Logic**).
+
+- New `fg/Mod.h` / `Mod.cpp`: CC numbers (Mod 1, Slew 84), the eight Mod shapes, the sixteen Mod rates (one-shot, ratchet, halves, quarters, two fixed levels), Envelope and Smooth curves, 0..1 to 0..127.
+- Trunk player: ties at gate 100 % (new note first, old note-off at the same sample right after; same pitch = no new note; tie into OFF ends at that step's start; ratcheted steps never tie); ratchet amounts x1 x2 x3 x4 x6 x8 x16 x32 with notes of half a slot (at least 1 ms); CC 84 before the note when the value changes, with legato hold when the next step has slew; CC 1 per Mod mode, moving values on a 10 ms grid, only changes sent; at most 100 CC messages in any one second; everything identical for any block size.
+- Saved step format version 3 (ratchet = place in the list, 16 Mod rates); versions 1 and 2 convert on load.
+- Resize: SHRINK keeps steps 1, 3, 5... and halves LENGTH (rounded up); EXPAND follows each step with an OFF copy and doubles LENGTH (refused above 64); done on the window thread like ROTATE, LENGTH is set to match.
+- Plugin: Mod mode handed to the player, CC events written in the player's order; editor shows the ratchet list, the real Shapes curve at its rate, click the caption strip for the next Mod rate (shift / right click back), double-click resets shape and rate.
+- Manual gaps: see the project file "Fractal-Garden manual gaps ledger" (G-34 to G-57 plus later additions).
+- Known: in the 100 per second cap test the last 10 ms tick before a step boundary can be dropped by the cap, so the Smooth test accepts a peak of 120 or more in that window.
+- No new controls; all 46 ids unchanged.
+- Checks: engine 2,111; clock 1,002,337.
+
 Version 0.4.0 (milestone 4, trunk editing and the pitch controls; **tested in Logic on 7 November 2026: everything worked as expected and as described**).
 
 - Removed the milestone 3 test aids: the clickable STEP lamp, the test note and the diagnostic counters (milestone 3 result recorded: Logic does not call a MIDI effect while stopped).

@@ -2,8 +2,10 @@
 //
 // Step data is saved with the Logic project but is NOT automatable (the control list says so). The fields below are the ones the
 // editor tabs show: Note, Gate Length, Slew, Ratchet and Mod (a value, plus for the Shapes mode a shape and a rate), and on / off.
-// The ranges are provisional until the milestone that makes each one work (4 for Note and on/off, 5 for Gate, Slew, Ratchet and Mod);
-// the saved bytes start with a version number so later milestones can widen them without breaking saved projects.
+//
+// Milestone 5 fixes the ranges: Gate 5 to 100 % of the step (100 % is a tie), Slew 0 to 100 %, Ratchet an index into the manual's
+// eight amounts (x1 x2 x3 x4 x6 x8 x16 x32), Mod 0 to 100 %, and sixteen Mod rates (the manual's table). The saved bytes start with
+// a version number so older projects are converted when they are opened.
 
 #pragma once
 
@@ -20,22 +22,32 @@ namespace fg
     // A step's note is a place in the scale, not a MIDI note (see fg/Pitch.h): octave * 12 + degree, 0 to 59.
     inline constexpr int kNoteMin = 0;
     inline constexpr int kNoteMax = kStoredNoteMax;
-    inline constexpr int kGateMax = 100;       // percent of the step
+    inline constexpr int kGateMin = 5;         // percent of the step (the manual: the minimum gate is 5 % of the clock rate)
+    inline constexpr int kGateMax = 100;       // percent of the step; 100 % ties the note to the next step
     inline constexpr int kSlewMax = 100;       // percent
-    inline constexpr int kRatchetMax = 8;      // 1 = no ratchet
     inline constexpr int kModMax = 100;        // percent
-    inline constexpr int kNumModShapes = 8;    // our own eight: sine, triangle, ramp up, ramp down, square, pulse, pluck, stairs
-    inline constexpr int kNumModRates = 8;     // milestone 2 shows these eight captions; the full list comes with milestone 5
 
+    // Ratchet: the stored value is an index into this list (the manual's Ratchet Amounts). Index 0 is "x1", no ratchet.
+    inline constexpr int kNumRatchets = 8;
+    inline constexpr int kRatchetMax = kNumRatchets - 1;
+    inline constexpr int kRatchetAmounts[kNumRatchets] = { 1, 2, 3, 4, 6, 8, 16, 32 };
+
+    inline constexpr int kNumModShapes = 8;    // our own eight: sine, triangle, ramp up, ramp down, square, pulse, pluck, stairs
     inline constexpr const char* kModShapeNames[] = { "SINE", "TRI", "RAMP UP", "RAMP DN", "SQUARE", "PULSE", "PLUCK", "STAIRS" };
-    inline constexpr const char* kModRateCaptions[] = { "x1", "x2", "x4", "x2 ratchet", "x4 ratchet", "1/2 first half", "x3 one-shot", "x1 one-shot" };
+
+    // The sixteen Mod rates of the manual's Shapes table, in the manual's order (see fg/Mod.h for what each does).
+    inline constexpr int kNumModRates = 16;
+    inline constexpr const char* kModRateCaptions[kNumModRates] = {
+        "x1", "x2 one-shot", "x2 ratchet", "x3 one-shot", "x3 ratchet", "x4 one-shot", "x4 ratchet", "x8 ratchet",
+        "1/2 first half", "1/2 second half", "1/4 first qtr", "1/4 second qtr", "1/4 third qtr", "1/4 fourth qtr",
+        "fixed 0-2.5V", "fixed 2.5-5V" };
 
     struct Step
     {
         std::uint8_t note = 12;          // octave 1, degree 0: the key note at MIDI 60 (C3 in Logic) for Key C, Root 0
         std::uint8_t gate = 50;
         std::uint8_t slew = 0;
-        std::uint8_t ratchet = 1;
+        std::uint8_t ratchet = 0;        // index into kRatchetAmounts (0 = x1)
         std::uint8_t mod = 0;
         std::uint8_t modShape = 0;
         std::uint8_t modRate = 0;
@@ -49,12 +61,13 @@ namespace fg
     {
         std::array<Step, kNumSteps> steps;
 
-        // The sample pattern the editor shows in milestone 2 (the pattern of pictures A and B for steps 1 to 24, then varied steps).
+        // The sample pattern the editor shows (the pattern of pictures A and B for steps 1 to 24, then varied steps).
         static StepData makeSample();
 
-        // Saved form: [version][count][count x 8 bytes]. Version 2 (0.4.0) stores each note as octave * 12 + degree; version 1 (0.2.0 and
-        // 0.3.0) stored plain MIDI notes, which are converted to the nearest degree of C major when loaded. fromBytes returns false (and
-        // changes nothing) for anything it does not understand.
+        // Saved form: [version][count][count x 8 bytes]. Version 3 (0.5.0) stores the ratchet as an index and uses the sixteen Mod rates;
+        // version 2 (0.4.0) stored the ratchet as a count 1 to 8 and eight Mod rates, and stored notes as octave * 12 + degree; version 1
+        // (0.2.0 and 0.3.0) also stored plain MIDI notes, which are converted to the nearest degree of C major when loaded. Older data is
+        // converted when loaded. fromBytes returns false (and changes nothing) for anything it does not understand.
         std::vector<std::uint8_t> toBytes() const;
         bool fromBytes (const std::uint8_t* data, std::size_t size);
 
@@ -70,4 +83,14 @@ namespace fg
     // Moves every note of the first `length` steps by a number of scale steps (+1 up, -1 down) in the given scale. A note that would go
     // past either end of the 5-octave range stops at the end.
     void transposeSteps (StepData&, int length, int scaleSteps, int scale);
+
+    // ---- Resize (the RESIZE buttons, milestone 5). Both change the step data and `length` for good. They return true if something changed. ----
+
+    // Shrink: the new length is half the old one, rounded up (8 to 4, 7 to 4, 2 to 1). The new step i is the old step 2i, so steps 1, 3, 5 ...
+    // are kept. Nothing happens at length 1. Steps past the new length are left as they were.
+    bool resizeShrink (StepData&, int& length);
+
+    // Expand ("Spread", the manual's default): the new length is twice the old one. The old step i moves to step 2i, and the step after it
+    // (2i+1) becomes a copy of it that is switched OFF, so the gaps are empty. Nothing happens if twice the length would pass 64.
+    bool resizeExpand (StepData&, int& length);
 }

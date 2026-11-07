@@ -29,6 +29,8 @@ namespace
         bool on = false;
         int note = 0;
         int velocity = 0;
+        int cc = -1;              // >= 0: a CC event (controller number)
+        int value = 0;            // CC value
         double ppq = 0.0;         // song position of the event
         int length = 8;           // LENGTH in effect for the block
         double stepLen = 0.25;    // step length in quarters in effect for the block
@@ -117,6 +119,8 @@ namespace
                 e.on = buf[(std::size_t) i].on;
                 e.note = buf[(std::size_t) i].note;
                 e.velocity = buf[(std::size_t) i].velocity;
+                e.cc = buf[(std::size_t) i].cc;
+                e.value = buf[(std::size_t) i].value;
                 e.ppq = h.ppq + (double) buf[(std::size_t) i].offset * pps;
                 e.length = s.length;
                 e.stepLen = stepLen;
@@ -131,16 +135,26 @@ namespace
     struct Analysis { bool ok = true; int sounding = 0; int ons = 0, offs = 0; int maxSounding = 0; };
 
     // One note at a time, every note-off matches the note that is sounding, and (sounding at the end) tells whether anything is left on.
-    Analysis analyse (const std::vector<Ev>& events)
+    // allowTies: a note-on while another note sounds is fine when the old note's note-off follows at the same sample (a tie, legato).
+    Analysis analyse (const std::vector<Ev>& events, bool allowTies = false)
     {
         Analysis a;
         std::vector<int> sounding;
-        for (const auto& e : events)
+        for (std::size_t i = 0; i < events.size(); ++i)
         {
+            const auto& e = events[i];
+            if (e.cc >= 0)
+                continue;                                              // CC events are not notes
             if (e.on)
             {
                 ++a.ons;
-                if (! sounding.empty()) a.ok = false;                  // overlapping notes: the player is monophonic
+                if (! sounding.empty())
+                {
+                    bool tied = false;
+                    for (std::size_t j = i + 1; allowTies && j < events.size() && events[j].t == e.t; ++j)
+                        if (events[j].cc < 0 && ! events[j].on && events[j].note == sounding.front()) tied = true;
+                    if (! tied) a.ok = false;                          // overlapping notes: the player is monophonic
+                }
                 sounding.push_back (e.note);
             }
             else
@@ -182,7 +196,7 @@ namespace
     {
         if (a.size() != b.size()) return false;
         for (std::size_t i = 0; i < a.size(); ++i)
-            if (a[i].on != b[i].on || a[i].note != b[i].note || std::llabs (a[i].t - b[i].t) > tolerance) return false;
+            if (a[i].on != b[i].on || a[i].note != b[i].note || a[i].cc != b[i].cc || a[i].value != b[i].value || std::llabs (a[i].t - b[i].t) > tolerance) return false;
         return true;
     }
 }
@@ -316,25 +330,33 @@ int main()
             CHECK (exact);
         }
 
-    // ---- rests, legato (gate 100 %) and gate lengths ----
+    // ---- rests, ties (gate 100 %) and gate lengths ----
     {
         fg::TrunkPlayer p;
         Run r = makeRun (48000);
         r.data = makeData (100);
         r.data.steps[2].on = false;
         const auto ev = simulate (p, r);                    // 8 steps
-        const auto a = analyse (ev);
+        const auto a = analyse (ev, true);
         CHECK (a.ok && a.ons == 7 && a.offs == 6 && a.sounding == 1);                 // the last note is still on: its step has not ended when the run does
-        // step 1 ends exactly where step 2 would start, with the note-off before any note-on at the same sample
-        bool legato = true, restHeard = false;
+        // a tie into an OFF step ends at the start of that step: step 2's note (49) ends exactly where step 3 would start
+        bool endsAtRest = false, restHeard = false;
+        for (const auto& e : ev)
+        {
+            if (e.t == 12000 && ! e.on && e.note == 49) endsAtRest = true;
+            if (e.note == 50) restHeard = true;
+        }
+        CHECK (endsAtRest && ! restHeard);
+        // a tie: the new note-on first, then the old note's note-off at the same sample (legato); five ties in this run
+        int tiePairs = 0;
+        bool pairsRight = true;
         for (std::size_t i = 0; i + 1 < ev.size(); ++i)
-            if (ev[i].t == 12000) { legato = legato && ! ev[i].on && ev[i].note == 49; }
-        for (const auto& e : ev) if (e.note == 50) restHeard = true;
-        CHECK (legato && ! restHeard);
-        bool offBeforeOn = true;                            // wherever an off and an on share a sample, the off comes first
-        for (std::size_t i = 0; i + 1 < ev.size(); ++i)
-            if (ev[i].t == ev[i + 1].t && ev[i].on && ! ev[i + 1].on) offBeforeOn = false;
-        CHECK (offBeforeOn);
+            if (ev[i].t == ev[i + 1].t)
+            {
+                ++tiePairs;
+                pairsRight = pairsRight && ev[i].on && ! ev[i + 1].on && ev[i + 1].note == ev[i].note - 1;
+            }
+        CHECK (pairsRight && tiePairs == 5);
     }
     for (int gate : { 0, 1, 5, 25, 50, 75, 99 })
     {
@@ -452,7 +474,8 @@ int main()
         r.host = [] (long long t) { fg::HostBlock h; h.playing = true; h.havePpq = true; h.ppq = (double) (t % 96000) * kPps; return h; };
         const auto ev = simulate (p, r);
         const auto a = analyse (ev);
-        CHECK (a.ok && a.sounding == 0 || (gate == 100 && a.ok && a.sounding <= 1));
+        const auto aTie = analyse (ev, gate == 100);
+        CHECK (aTie.ok && (aTie.sounding == 0 || (gate == 100 && aTie.sounding <= 1)));
         CHECK (a.ons == 5 * 16);
         bool samePasses = true;
         for (int pass = 1; pass < 5; ++pass)
@@ -853,6 +876,346 @@ int main()
                 locked = j < ea.size() && ea[j].note == eb[i].note;
             }
             CHECK (locked);
+        }
+    }
+
+    // =====================================================================================================================
+    // Milestone 5: ties, ratchets, slew (CC 84), Mod (CC 1), the cap of 100 CC messages a second
+    {
+        auto settingsWith = [] (int modMode, bool cc, int rate = fg::kDefaultRate, int ratio = fg::kDefaultRatio, int length = 8)
+        {
+            return [=] (long long) { fg::PlayerSettings st = plainSettings(); st.modMode = modMode; st.sendCc = cc; st.rate = rate; st.ratio = ratio; st.length = length; return st; };
+        };
+        auto ccOf = [] (const std::vector<Ev>& ev, int cc) { std::vector<Ev> r; for (const auto& e : ev) if (e.cc == cc) r.push_back (e); return r; };
+        auto notesOf = [] (const std::vector<Ev>& ev) { std::vector<Ev> r; for (const auto& e : ev) if (e.cc < 0) r.push_back (e); return r; };
+        auto near = [] (long long a, long long b, long long tol = 1) { return std::llabs (a - b) <= tol; };
+        const long long step = 6000;                          // one 1/16 step at 120 bpm and 48 kHz
+
+        // ---- nothing but notes unless CC is asked for ----
+        {
+            fg::TrunkPlayer p;
+            Run r = makeRun (96000);
+            r.data = makeData (50);
+            for (auto& st : r.data.steps) { st.slew = 60; st.mod = 70; }
+            const auto ev = simulate (p, r);
+            CHECK (ccOf (ev, 1).empty() && ccOf (ev, 84).empty() && notesOf (ev).size() == ev.size());
+        }
+
+        // ---- ties ----
+        {
+            fg::TrunkPlayer p;                                  // the same pitch tied all the way: one note, never re-triggered
+            Run r = makeRun (48000);
+            r.data = makeData (100);
+            for (auto& st : r.data.steps) st.note = 5;
+            const auto ev = simulate (p, r);
+            const auto a = analyse (ev, true);
+            CHECK (a.ok && a.ons == 1 && a.offs == 0 && a.sounding == 1 && p.gateOpen());
+        }
+        {
+            fg::TrunkPlayer p;                                  // a tie into a step with a shorter gate: new note first, old note off right after, then the short gate
+            Run r = makeRun (24000);
+            r.data = makeData (50);
+            r.data.steps[0].gate = 100;
+            const auto ev = simulate (p, r);
+            bool pair = false, shortOff = false, noEarlyOff = true;
+            for (std::size_t i = 0; i + 1 < ev.size(); ++i)
+                if (ev[i].t == step && ev[i].on && ev[i].note == 49 && ev[i + 1].t == step && ! ev[i + 1].on && ev[i + 1].note == 48) pair = true;
+            for (const auto& e : ev)
+            {
+                if (! e.on && e.note == 49 && near (e.t, step + 3000)) shortOff = true;
+                if (! e.on && e.note == 48 && e.t < step) noEarlyOff = false;
+            }
+            CHECK (pair && shortOff && noEarlyOff && analyse (ev, true).ok);
+        }
+        {
+            fg::TrunkPlayer p;                                  // 99 % is not a tie
+            Run r = makeRun (12000);
+            r.data = makeData (99);
+            const auto ev = simulate (p, r);
+            CHECK (analyse (ev).ok && ev.size() == 4 && near (ev[1].t, 5940) && near (ev[3].t, step + 5940));
+        }
+        {
+            fg::TrunkPlayer p;                                  // slew on the NEXT step holds this note up to it (legato), so a mono synth can glide
+            Run r = makeRun (24000);
+            r.data = makeData (50);
+            r.data.steps[1].slew = 40;
+            const auto ev = simulate (p, r);
+            bool pair = false, earlyOff = false, secondShort = false;
+            for (std::size_t i = 0; i + 1 < ev.size(); ++i)
+                if (ev[i].t == step && ev[i].on && ev[i].note == 49 && ev[i + 1].t == step && ! ev[i + 1].on && ev[i + 1].note == 48) pair = true;
+            for (const auto& e : ev)
+            {
+                if (! e.on && e.note == 48 && e.t < step) earlyOff = true;
+                if (! e.on && e.note == 49 && near (e.t, step + 3000)) secondShort = true;
+            }
+            CHECK (pair && ! earlyOff && secondShort);
+        }
+        {
+            fg::TrunkPlayer p;                                  // a ratcheted step is never tied, gate length or not
+            Run r = makeRun (12000);
+            r.data = makeData (100);
+            for (auto& st : r.data.steps) st.ratchet = 1;       // x2
+            const auto ev = simulate (p, r);
+            const auto a = analyse (ev);                        // strict: no overlaps anywhere
+            CHECK (a.ok && a.ons == 4 && a.offs == 4 && near (ev[0].t, 0) && near (ev[2].t, 3000) && near (ev[1].t, 1500) && near (ev[3].t, 4500));
+        }
+
+        // ---- ratchets: every amount of the list, two block sizes, notes evenly spaced and half a slot long (never under 1 ms) ----
+        for (int idx = 1; idx < fg::kNumRatchets; ++idx)
+            for (int block : { 64, 5000 })
+            {
+                fg::TrunkPlayer p;
+                Run r = makeRun (4 * step);
+                r.block = block;
+                r.data = makeData (100);                         // the gate length does not apply
+                for (auto& st : r.data.steps) st.ratchet = (std::uint8_t) idx;
+                const int amount = fg::kRatchetAmounts[idx];
+                const auto ev = simulate (p, r);
+                const auto a = analyse (ev);
+                const double slot = (double) step / amount;
+                const double width = std::min (std::max (0.5 * slot, 48.0), 0.9 * slot);
+                bool good = a.ok && a.ons == 4 * amount && a.offs == 4 * amount;
+                for (int st = 0; st < 4 && good; ++st)
+                    for (int q = 0; q < amount && good; ++q)
+                    {
+                        const std::size_t i = (std::size_t) (2 * (st * amount + q));
+                        good = i + 1 < ev.size() && ev[i].on && ! ev[i + 1].on && ev[i].note == 48 + st
+                            && near (ev[i].t, (long long) std::llround (st * (double) step + q * slot))
+                            && near (ev[i + 1].t - ev[i].t, (long long) std::llround (width), 2);
+                    }
+                CHECK (good);
+            }
+
+        // ---- slew: CC 84 before the note, only when the value changes, none for OFF steps, sent again after a jump ----
+        {
+            fg::TrunkPlayer p;
+            Run r = makeRun (48000);
+            r.data = makeData (50);
+            for (int i = 0; i < 8; ++i) r.data.steps[(std::size_t) i].slew = (std::uint8_t) ((i * 13) % 101);
+            r.data.steps[2].on = false;
+            r.data.steps[5].slew = r.data.steps[4].slew;        // unchanged value: not sent again
+            r.settings = settingsWith (0, true);
+            const auto ev = simulate (p, r);
+            const auto cc84 = ccOf (ev, 84);
+            int last = -1; std::size_t idx = 0; bool good = true;
+            for (int i = 0; i < 8; ++i)
+            {
+                if (! r.data.steps[(std::size_t) i].on) continue;
+                const int v = (int) std::lround (r.data.steps[(std::size_t) i].slew * 127.0 / 100.0);
+                if (v != last) { good = good && idx < cc84.size() && cc84[idx].value == v && near (cc84[idx].t, i * step); ++idx; last = v; }
+            }
+            CHECK (good && idx == cc84.size() && cc84.size() >= 5);
+            bool before = true;                                  // the CC comes before the note of the same sample
+            for (std::size_t i = 0; i < ev.size(); ++i)
+                if (ev[i].cc == 84)
+                    for (std::size_t j = 0; j < i; ++j)
+                        if (ev[j].cc < 0 && ev[j].t == ev[i].t && ev[j].on) before = false;
+            CHECK (before);
+        }
+        {
+            fg::TrunkPlayer p;                                  // the same slew everywhere: sent once; after a jump, sent again
+            Run r = makeRun (96000);
+            r.data = makeData (50);
+            for (auto& st : r.data.steps) st.slew = 50;
+            r.settings = settingsWith (0, true);
+            r.host = [] (long long t) { fg::HostBlock h; h.playing = true; h.havePpq = true; h.ppq = (double) t * kPps + (t >= 48000 ? 8.0 : 0.0); return h; };
+            const auto ev = simulate (p, r);
+            const auto cc84 = ccOf (ev, 84);
+            CHECK (cc84.size() == 2 && cc84[0].value == 64 && cc84[0].t == 0 && cc84[1].t >= 48000 && cc84[1].t <= 48000 + step);
+        }
+
+        // ---- Mod, Velocity: a fixed level per step, also the note's velocity (lowest 1); OFF steps send 0 ----
+        {
+            fg::TrunkPlayer p;
+            Run r = makeRun (48000);
+            r.data = makeData (50);
+            for (int i = 0; i < 8; ++i) r.data.steps[(std::size_t) i].mod = (std::uint8_t) ((i * 13) % 101);
+            r.data.steps[3].on = false;
+            r.settings = settingsWith (1, true);
+            const auto ev = simulate (p, r);
+            const auto cc1 = ccOf (ev, 1);
+            const auto ons = onsOf (ev);
+            int last = -1; std::size_t idx = 0, onIdx = 0; bool good = true, vel = true;
+            for (int i = 0; i < 8; ++i)
+            {
+                const auto& st = r.data.steps[(std::size_t) i];
+                const int v = st.on ? (int) std::lround (st.mod * 127.0 / 100.0) : 0;
+                if (v != last) { good = good && idx < cc1.size() && cc1[idx].value == v && near (cc1[idx].t, i * step); ++idx; last = v; }
+                if (st.on) { vel = vel && onIdx < ons.size() && ons[onIdx].velocity == std::max (1, v); ++onIdx; }
+            }
+            CHECK (good && vel && idx == cc1.size() && onIdx == ons.size());
+        }
+        {
+            fg::TrunkPlayer p;                                  // other modes: velocity 100
+            Run r = makeRun (12000);
+            r.data = makeData (50);
+            for (auto& st : r.data.steps) st.mod = 20;
+            r.settings = settingsWith (2, true);
+            const auto ons = onsOf (simulate (p, r));
+            CHECK (ons.size() == 2 && ons[0].velocity == 100 && ons[1].velocity == 100);
+        }
+
+        // ---- Mod, Shapes: a fixed level for the "fixed" rates (sent once), a sine over one step ----
+        {
+            fg::TrunkPlayer p;
+            Run r = makeRun (48000);
+            r.data = makeData (50);
+            for (auto& st : r.data.steps) { st.modRate = 14; st.modShape = 3; }
+            r.settings = settingsWith (0, true);
+            const auto cc1 = ccOf (simulate (p, r), 1);
+            CHECK (cc1.size() == 1 && cc1[0].value == (int) std::lround (127.0 * 0.5 * 3.0 / 7.0));
+        }
+        {
+            fg::TrunkPlayer p;                                  // sine, x1, a step of a quarter (24000 samples): up to full scale and back, on a 10 ms grid
+            Run r = makeRun (48000);
+            r.data = makeData (50);
+            for (auto& st : r.data.steps) { st.modRate = 0; st.modShape = 0; }
+            r.settings = settingsWith (0, true, 2, fg::kDefaultRatio, 4);
+            const auto cc1 = ccOf (simulate (p, r), 1);
+            int peak = 0; bool grid = true, up = true, down = true; int prev = -1; long long peakT = 0;
+            for (const auto& e : cc1)
+            {
+                if (e.t >= 24000) break;
+                if (e.value > peak) { peak = e.value; peakT = e.t; }
+                if (e.t % 480 != 0) grid = false;
+                if (e.t <= 12000 && e.value < prev) up = false;
+                if (e.t > 12480 && e.value > prev) down = false;
+                prev = e.value;
+            }
+            CHECK (! cc1.empty() && cc1[0].t == 0 && cc1[0].value == 0 && peak >= 126 && near (peakT, 12000, 480) && grid && up && down && prev <= 3);
+        }
+        {
+            fg::TrunkPlayer p;                                  // x2 ratchet: two sines in a step
+            Run r = makeRun (24000);
+            r.data = makeData (50);
+            for (auto& st : r.data.steps) { st.modRate = 2; st.modShape = 0; }
+            r.settings = settingsWith (0, true, 2, fg::kDefaultRatio, 4);
+            const auto cc1 = ccOf (simulate (p, r), 1);
+            int peaks = 0;
+            for (std::size_t i = 1; i + 1 < cc1.size(); ++i)
+                if (cc1[i].value >= 125 && cc1[i].value >= cc1[i - 1].value && cc1[i].value > cc1[i + 1].value) ++peaks;
+            CHECK (peaks == 2);
+        }
+        {
+            fg::TrunkPlayer p;                                  // OFF step in Shapes: 0
+            Run r = makeRun (12000);
+            r.data = makeData (50);
+            for (auto& st : r.data.steps) { st.modRate = 14; st.modShape = 7; }
+            r.data.steps[1].on = false;
+            r.settings = settingsWith (0, true);
+            const auto cc1 = ccOf (simulate (p, r), 1);
+            CHECK (cc1.size() == 2 && cc1[0].value == 64 && cc1[1].value == 0 && near (cc1[1].t, step));
+        }
+
+        // ---- Mod, Envelope: from full scale down to nothing over the step (peak at the very start) ----
+        {
+            fg::TrunkPlayer p;
+            Run r = makeRun (24000);
+            r.data = makeData (50);
+            for (auto& st : r.data.steps) st.mod = 0;
+            r.settings = settingsWith (2, true, 2, fg::kDefaultRatio, 4);
+            const auto cc1 = ccOf (simulate (p, r), 1);
+            bool down = true;
+            for (std::size_t i = 1; i < cc1.size(); ++i) down = down && cc1[i].value <= cc1[i - 1].value;
+            CHECK (cc1.size() > 20 && cc1[0].value == 127 && cc1[0].t == 0 && down && cc1.back().value <= 3);
+        }
+        {
+            fg::TrunkPlayer p;                                  // peak in the middle
+            Run r = makeRun (24000);
+            r.data = makeData (50);
+            for (auto& st : r.data.steps) st.mod = 50;
+            r.settings = settingsWith (2, true, 2, fg::kDefaultRatio, 4);
+            const auto cc1 = ccOf (simulate (p, r), 1);
+            int peak = 0; long long peakT = 0;
+            for (const auto& e : cc1) if (e.value > peak) { peak = e.value; peakT = e.t; }
+            CHECK (cc1[0].value == 0 && peak >= 125 && near (peakT, 12000, 480) && cc1.back().value <= 6);
+        }
+
+        // ---- Mod, Smooth: a straight glide from the last level to the next ----
+        {
+            fg::TrunkPlayer p;
+            Run r = makeRun (96000);
+            r.data = makeData (100);
+            for (int i = 0; i < 4; ++i) r.data.steps[(std::size_t) i].mod = (std::uint8_t) (i % 2 == 1 ? 100 : 0);
+            r.settings = settingsWith (3, true, 2, fg::kDefaultRatio, 4);
+            const auto cc1 = ccOf (simulate (p, r), 1);
+            bool rise = true, fall = true; int topValue = 0, endValue = -1;
+            int prev = -1;
+            for (const auto& e : cc1)
+            {
+                if (e.t > 24000 && e.t < 48000) { rise = rise && e.value >= prev; topValue = std::max (topValue, e.value); }
+                if (e.t > 48000 && e.t < 72000) { fall = fall && e.value <= prev; }
+                if (e.t >= 48000 && e.t < 72000) endValue = e.value;
+                prev = e.value;
+            }
+            CHECK (cc1[0].value == 127 && rise && fall && topValue >= 120 && endValue <= 4);       // step 1 glides down from the level of step 4 (the pattern is a loop); the 100 a second cap may drop the very last tick
+        }
+
+        // ---- the cap: never more than 100 CC messages in any one second, even at the fastest settings ----
+        {
+            fg::TrunkPlayer p;
+            Run r = makeRun (3 * 48000);
+            r.block = 512;
+            r.data = makeData (50);
+            for (int i = 0; i < 8; ++i) { auto& st = r.data.steps[(std::size_t) i]; st.slew = (std::uint8_t) (i % 2 ? 100 : 0); st.modRate = 7; st.modShape = 0; }
+            r.host = linearHost (0.0, 300.0);                  // 300 bpm, 1/32 at x8: 320 steps a second
+            r.settings = settingsWith (0, true, 8, 8, 8);
+            const auto ev = simulate (p, r);
+            std::vector<long long> times;
+            for (const auto& e : ev) if (e.cc >= 0) times.push_back (e.t);
+            bool capped = times.size() > 250;                  // plenty were sent (so the test means something)
+            std::size_t lo = 0;
+            for (std::size_t i = 0; i < times.size(); ++i)
+            {
+                while (times[i] - times[lo] >= 48000) ++lo;
+                capped = capped && (i - lo + 1) <= 100;
+            }
+            CHECK (capped);
+            CHECK (analyse (ev, true).sounding <= 2);
+        }
+
+        // ---- the same output whatever the block size, for all four Mod modes ----
+        for (int mode = 0; mode < 4; ++mode)
+        {
+            fg::StepData d = makeData (70);
+            for (int i = 0; i < 64; ++i)
+            {
+                auto& st = d.steps[(std::size_t) i];
+                st.gate = (std::uint8_t) (30 + (i * 17) % 71);
+                st.slew = (std::uint8_t) ((i * 37) % 101);
+                st.ratchet = (std::uint8_t) (i % 8);
+                st.mod = (std::uint8_t) ((i * 29) % 101);
+                st.modShape = (std::uint8_t) (i % 8);
+                st.modRate = (std::uint8_t) (i % 16);
+                st.on = i % 6 != 4;
+            }
+            std::vector<Ev> reference;
+            for (int block : { 512, 1, 37, 64, 4096, 8192 })
+            {
+                fg::TrunkPlayer p;
+                Run r = makeRun (96000);
+                r.block = block;
+                r.data = d;
+                r.settings = settingsWith (mode, true, 4, 4, 16);          // 1/8 steps (12000 samples), 16 steps
+                const auto ev = simulate (p, r);
+                if (block == 512) reference = ev;
+                else CHECK (sameEvents (reference, ev));
+                CHECK (analyse (ev, true).ok);
+            }
+        }
+
+        // ---- stop and start, and jumps: the CC values are sent again ----
+        {
+            fg::TrunkPlayer p;
+            Run r = makeRun (96000);
+            r.data = makeData (50);
+            for (auto& st : r.data.steps) { st.slew = 50; st.mod = 70; }
+            r.settings = settingsWith (1, true);
+            r.host = [] (long long t) { fg::HostBlock h; h.playing = ! (t >= 24000 && t < 36000); h.havePpq = true; h.ppq = (double) t * kPps; return h; };
+            const auto ev = simulate (p, r);
+            const auto cc84 = ccOf (ev, 84), cc1 = ccOf (ev, 1);
+            CHECK (cc84.size() == 2 && cc1.size() == 2 && cc84[1].t >= 36000 && cc1[1].t >= 36000);
+            CHECK (analyse (ev, true).ok);       // slew on every step: every step is held into the next (legato)
         }
     }
 

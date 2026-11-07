@@ -11,6 +11,10 @@
 //  - RESET: counted on whatever thread changes it (it can be Logic's automation); the audio thread sees the count change and
 //    restarts the order at the next step.
 //  - ROTATE and TRANSPOSE: counted the same way, then carried out on the window thread (they change the step data for good).
+//
+// Milestone 5: the clock also gets the Mod mode and is told to send CC 84 (slew) and CC 1 (mod) next to the notes; the CC messages
+// are added to the output in the clock's order (CC before the note it belongs to). SHRINK and EXPAND (Resize) are counted and carried
+// out like ROTATE, and they also set LENGTH.
 // Then the button is switched off again a few times a second ("act, then pop back"). A project saved while one was on opens with all
 // of them off and none of them acts on loading.
 //
@@ -63,6 +67,7 @@ public:
     void setStep (int index, const fg::Step& step);         // changes one step and saves it into the state
     void rotateTrunk (int direction);                       // +1 RIGHT / -1 LEFT: the first LENGTH steps move one place, for good
     void transposeTrunk (int scaleSteps);                   // +1 UP / -1 DOWN: the first LENGTH steps move one scale step, for good
+    void resizeTrunk (int direction);                       // -1 SHRINK / +1 EXPAND: the trunk becomes half / twice as long (LENGTH follows), for good
     int getStepsRevision() const { return stepsRevision.load(); }   // goes up whenever the steps change (the window repaints on it)
 
     // ---- editor choices (saved in the plugin state) ----
@@ -125,6 +130,7 @@ private:
     std::atomic<float>* keyParam = nullptr;
     std::atomic<float>* rootParam = nullptr;
     std::atomic<float>* orderParam = nullptr;
+    std::atomic<float>* modModeParam = nullptr;
     std::atomic<float>* pendRepeatParam = nullptr;
     std::atomic<float>* chanceParams[fg::ChanceMix::kNumModes] = {};
     std::atomic<float>* chanceRunMinParam = nullptr;
@@ -133,6 +139,7 @@ private:
     std::atomic<std::uint32_t> orderSeed { 1 };                 // seed of the random orders (saved in the state)
     std::atomic<std::uint32_t> resetCount { 0 };                // goes up at every press of RESET
     std::atomic<int> pendingRotateLeft { 0 }, pendingRotateRight { 0 }, pendingTransposeUp { 0 }, pendingTransposeDown { 0 };
+    std::atomic<int> pendingShrink { 0 }, pendingExpand { 0 };
     fg::NoteEvent events[kMaxEvents];
     juce::MidiBuffer outBuffer;
     std::atomic<double> sampleRate { 44100.0 };

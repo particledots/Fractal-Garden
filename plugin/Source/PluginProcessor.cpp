@@ -13,6 +13,7 @@ FractalGardenProcessor::FractalGardenProcessor()
     keyParam    = apvts.getRawParameterValue (fg::id::key);
     rootParam   = apvts.getRawParameterValue (fg::id::root);
     orderParam  = apvts.getRawParameterValue (fg::id::order);
+    modModeParam = apvts.getRawParameterValue (fg::id::modMode);
     pendRepeatParam = apvts.getRawParameterValue (fg::id::pendRepeat);
     chanceParams[fg::ChanceMix::Forward]  = apvts.getRawParameterValue (fg::id::chanceForward);
     chanceParams[fg::ChanceMix::Backward] = apvts.getRawParameterValue (fg::id::chanceBackward);
@@ -31,7 +32,7 @@ FractalGardenProcessor::FractalGardenProcessor()
     outBuffer.ensureSize (16384);
     saveStepsToState();
 
-    for (const char* id : { fg::id::reset, fg::id::rotateLeft, fg::id::rotateRight, fg::id::transposeDown, fg::id::transposeUp })
+    for (const char* id : { fg::id::reset, fg::id::rotateLeft, fg::id::rotateRight, fg::id::transposeDown, fg::id::transposeUp, fg::id::resizeShrink, fg::id::resizeExpand })
         apvts.addParameterListener (id, this);
     startTimerHz (20);
 }
@@ -39,7 +40,7 @@ FractalGardenProcessor::FractalGardenProcessor()
 FractalGardenProcessor::~FractalGardenProcessor()
 {
     stopTimer();
-    for (const char* id : { fg::id::reset, fg::id::rotateLeft, fg::id::rotateRight, fg::id::transposeDown, fg::id::transposeUp })
+    for (const char* id : { fg::id::reset, fg::id::rotateLeft, fg::id::rotateRight, fg::id::transposeDown, fg::id::transposeUp, fg::id::resizeShrink, fg::id::resizeExpand })
         apvts.removeParameterListener (id, this);
 }
 
@@ -67,6 +68,8 @@ void FractalGardenProcessor::parameterChanged (const juce::String& parameterId, 
     else if (parameterId == fg::id::rotateRight)    ++pendingRotateRight;
     else if (parameterId == fg::id::transposeDown)  ++pendingTransposeDown;
     else if (parameterId == fg::id::transposeUp)    ++pendingTransposeUp;
+    else if (parameterId == fg::id::resizeShrink)   ++pendingShrink;
+    else if (parameterId == fg::id::resizeExpand)   ++pendingExpand;
 }
 
 // Rotate and Transpose change the step data, so they are carried out here, on the window thread.
@@ -76,6 +79,8 @@ void FractalGardenProcessor::applyPendingButtons()
     for (int n = pendingRotateRight.exchange (0); n > 0; --n)     rotateTrunk (+1);
     for (int n = pendingTransposeDown.exchange (0); n > 0; --n)   transposeTrunk (-1);
     for (int n = pendingTransposeUp.exchange (0); n > 0; --n)     transposeTrunk (+1);
+    for (int n = pendingShrink.exchange (0); n > 0; --n)          resizeTrunk (-1);
+    for (int n = pendingExpand.exchange (0); n > 0; --n)          resizeTrunk (+1);
 }
 
 void FractalGardenProcessor::rotateTrunk (int direction)
@@ -97,6 +102,27 @@ void FractalGardenProcessor::transposeTrunk (int scaleSteps)
         fg::transposeSteps (steps, length, scaleSteps, scale);
     }
     saveStepsToState();
+}
+
+// Resize: the trunk becomes half as long (every other step kept) or twice as long (each step followed by a copy that is OFF), and
+// LENGTH is set to match. Nothing happens when it cannot (length 1 cannot shrink, more than 32 cannot expand).
+void FractalGardenProcessor::resizeTrunk (int direction)
+{
+    int length = juce::jlimit (1, fg::kNumSteps, juce::roundToInt (lengthParam->load()));
+    bool changed;
+    {
+        const juce::ScopedLock sl (stepLock);
+        changed = direction < 0 ? fg::resizeShrink (steps, length) : fg::resizeExpand (steps, length);
+    }
+    if (! changed)
+        return;
+    saveStepsToState();
+    if (auto* p = apvts.getParameter (fg::id::length))
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost (p->convertTo0to1 ((float) length));
+        p->endChangeGesture();
+    }
 }
 
 void FractalGardenProcessor::timerCallback()
@@ -184,6 +210,8 @@ void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     settings.ratio  = juce::jlimit (0, fg::kNumRatios - 1, juce::roundToInt (ratioParam->load()));
     settings.length = juce::jlimit (1, fg::kNumSteps,      juce::roundToInt (lengthParam->load()));
     settings.order  = juce::jlimit (0, fg::kNumOrders - 1, juce::roundToInt (orderParam->load()));
+    settings.modMode = juce::jlimit (0, fg::kNumModModes - 1, juce::roundToInt (modModeParam->load()));
+    settings.sendCc = true;
     settings.pendRepeat = pendRepeatParam->load() > 0.5f;
     settings.seed   = orderSeed.load();
     for (int i = 0; i < fg::ChanceMix::kNumModes; ++i)
@@ -208,6 +236,11 @@ void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     for (int i = 0; i < numEvents; ++i)
     {
         const auto& e = events[i];
+        if (e.cc >= 0)
+        {
+            outBuffer.addEvent (juce::MidiMessage::controllerEvent (fg::kPlayerChannel, e.cc, e.value), juce::jlimit (0, lastSample, e.offset));
+            continue;
+        }
         outBuffer.addEvent (e.on ? juce::MidiMessage::noteOn (fg::kPlayerChannel, e.note, (juce::uint8) e.velocity)
                                  : juce::MidiMessage::noteOff (fg::kPlayerChannel, e.note),
                             juce::jlimit (0, lastSample, e.offset));
@@ -357,6 +390,7 @@ void FractalGardenProcessor::setStateInformation (const void* data, int sizeInBy
             resetCount.store (resetBefore);
             pendingRotateLeft.store (0); pendingRotateRight.store (0);
             pendingTransposeDown.store (0); pendingTransposeUp.store (0);
+            pendingShrink.store (0); pendingExpand.store (0);
 
             if (apvts.state.hasProperty (FgParams::kSeedProperty))
                 orderSeed.store ((std::uint32_t) (int) apvts.state.getProperty (FgParams::kSeedProperty) | 1u);
