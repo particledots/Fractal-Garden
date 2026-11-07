@@ -13,7 +13,7 @@ Version 0.8.0 (milestones 9 and 10, first part: pattern bank and settings page; 
 - Panel: SETTINGS... in the header opens the settings page (a pop-over like CHANCE...); the PATTERN card shows the slot's state; the plain window fits 65 controls (three columns of 22).
 - Not built: sharing patterns between instances (the canon patch). Proposed: Logic's copy and paste of plug-in settings for now; a shared pattern file only if that fails.
 - Manual gaps: see the project file "Fractal-Garden manual gaps ledger" (G-122 onward).
-- Automatic checks: engine 179,965; clock 6,405,691; window and plugin test 441. GitHub run: see below once recorded.
+- Automatic checks: engine 179,965; clock 6,405,691; window and plugin test 441. GitHub run 42425937643 (commit b883c97, 7 November 2026): green. Engine self-test, universal build check (Apple Silicon + Intel), ad-hoc signing, auval, pluginval (AU and VST3), package and private draft release all passed.
 
 Version 0.7.0 (milestone 8, Performance mode and ornamentation; **tested in Logic on 7 November 2026: "sounds fabulous", finished**).
 
