@@ -3,7 +3,7 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
-Version 0.4.0 (milestone 4, trunk editing and the pitch controls; built and checked without Logic, **not yet tested in Logic**).
+Version 0.4.0 (milestone 4, trunk editing and the pitch controls; **tested in Logic on 7 November 2026: everything worked as expected and as described**).
 
 - Removed the milestone 3 test aids: the clickable STEP lamp, the test note and the diagnostic counters (milestone 3 result recorded: Logic does not call a MIDI effect while stopped).
 - New `fg/Pitch.h` / `Pitch.cpp`: the 28 scales (the Dotriaconta-tone table, same order). A step stores octave x 12 + degree (0 to 59); the played MIDI note is 48 + KEY + 12 x octave + scale interval (after ROOT), clamped 0 to 127. SCALE and KEY apply as each note plays, so stored steps never change with them.

@@ -4,7 +4,7 @@ An original AU / VST3 **MIDI effect** for Logic Pro, inspired by the feel of a E
 sequencer (the Qu-Bit Electronix Bloom v2): 64 steps, branches that grow from a trunk, and knobs that mutate the pattern. All code is
 our own; it is not a port or copy of anything, and it is not affiliated with Qu-Bit Electronix.
 
-**Status: version 0.4.0 (milestone 4: trunk editing and the pitch controls). Built and checked without Logic; not yet tested in Logic.** Milestone 3 (0.3.0) was tested in Logic on both test Macs (M4 Mac mini, Logic 11.2.2; Intel Mac, macOS 12.7.8, Logic 10.7.8) on 7 November 2026: every check passed and it is finished. Its one experiment showed that Logic does not call a MIDI effect while stopped (test notes 0 sent of 18 and 0 of 28 asked), so the MIDI version only sounds while Logic plays.
+**Status: version 0.4.0 (milestone 4: trunk editing and the pitch controls). Tested in Logic on 7 November 2026: everything worked as expected and as described, and it is finished.** Milestone 3 (0.3.0) was tested in Logic on both test Macs (M4 Mac mini, Logic 11.2.2; Intel Mac, macOS 12.7.8, Logic 10.7.8) on 7 November 2026: every check passed and it is finished. Its one experiment showed that Logic does not call a MIDI effect while stopped (test notes 0 sent of 18 and 0 of 28 asked), so the MIDI version only sounds while Logic plays.
 **The trunk now has its pitch controls and all eleven orders.** LENGTH, SCALE (28) and KEY, ORDER (11), REPEAT ENDS, CHANCE... , ROOT, ROTATE, TRANSPOSE, RESET and the page chips work, and you can edit steps by scale degree. The temporary test aids from 0.3.0 (clickable STEP lamp, test note, counters) are gone. Branches, Path, Mutate, ratchet, slew and mod still only move and are saved; they start working in later milestones.
 
 ## First five minutes (after installing, see *Getting the plugin*)
@@ -47,7 +47,7 @@ The step editor (tabs, Mod Out chips, page chips, an overview of all 64 steps, e
 - Engine self-test: 1,214 checks (control table, menus, the 28 scales and pitch, step data save / load, reading old 0.2.0 / 0.3.0 data, rotate, transpose, all eleven orders: shapes, repeat, determinism and seeds).
 - Clock self-test: 575,208 checks. Everything from 0.3.0 (all RATEs and RATIOs, block sizes 1 to 8192, 44.1 to 96 kHz, tempos, count-in, stop / start, relocate, cycle, time signatures, two instances) plus every order across several block sizes, the shown step in every order, SCALE / KEY / ROOT, and RESET (once, twice, from the start, while stopped, after a jump, after stop and start), and two instances in every order staying in step.
 - Window and plugin test on a Linux computer: 246 checks (the milestone 3 checks, adapted, plus: no test aids left; SCALE / KEY / ROOT re-pitch the notes without changing steps; Reverse, Converge, Pendulum and Chance mix in the playing plugin; ROTATE and TRANSPOSE both ways, once per press; RESET; loading a project does not press buttons; the order seed is saved and old projects get one; page chips follow LENGTH; step editing by degree, double-click reset, no editing beyond LENGTH).
-- **Not yet tested in Logic.** Milestone 3 was (7 November 2026, both Macs, everything passed).
+- **Tested in Logic (7 November 2026):** everything worked as expected and as described (SCALE, KEY, ROOT, the eleven orders, ROTATE, TRANSPOSE, RESET, page chips and step editing). Milestone 3 was tested on both Macs on the same day, everything passed.
 
 ## What changed in 0.4.0
 
