@@ -10,6 +10,7 @@
 #include <fg/Mutate.h>
 #include <fg/Orders.h>
 #include <fg/Params.h>
+#include <fg/Perform.h>
 #include <fg/Pitch.h>
 #include <fg/Steps.h>
 
@@ -989,6 +990,168 @@ int main()
                 }
             for (int k = 0; k < fg::kNumBranchKinds; ++k) CHECK (seen[k] > 20);
             CHECK (fg::kBranchLetters[0] == 'R' && fg::kBranchLetters[1] == 'I' && fg::kBranchLetters[2] == 'T' && fg::kBranchLetters[3] == 'M' && fg::kBranchLetters[4] == '?');
+        }
+    }
+
+    // ---- Milestone 8: Performance mode ----
+    {
+        // the zones: split at the middle of the knob
+        CHECK (fg::perfChance (0.0) == 0.0 && std::fabs (fg::perfChance (0.25) - 0.5) < 1e-12 && fg::perfChance (0.5) == 1.0 && fg::perfChance (0.9) == 1.0);
+        CHECK (! fg::perfInZone2 (0.5) && fg::perfInZone2 (0.5001) && ! fg::perfInZone2 (0.0));
+        CHECK (fg::perfFixedRatchet (0.5) == -1 && fg::perfFixedRatchet (0.2) == -1);
+        CHECK (fg::perfFixedRatchet (0.5001) == 0 && fg::perfFixedRatchet (1.0) == fg::kRatchetMax);
+        {
+            // eight equal bands, in order, x1 x2 x3 x4 x6 x8 x16 x32
+            int last = -1; bool steady = true; int counts[fg::kNumRatchets] = {};
+            for (int i = 0; i <= 8000; ++i)
+            {
+                const int band = fg::perfFixedRatchet (0.5001 + 0.4999 * i / 8000.0);
+                if (band < last) steady = false;
+                last = band;
+                ++counts[band];
+            }
+            CHECK (steady);
+            for (int b = 0; b < fg::kNumRatchets; ++b) CHECK (counts[b] > 900 && counts[b] < 1100);
+        }
+        CHECK (fg::perfFixedSlew (0.5) == -1 && fg::perfFixedSlew (0.75) == 50 && fg::perfFixedSlew (1.0) == 100);
+        CHECK (fg::perfOrnamentChance (0.5) == 0.0 && std::fabs (fg::perfOrnamentChance (0.75) - 0.5) < 1e-12 && fg::perfOrnamentChance (1.0) == 1.0);
+        CHECK (fg::perfOrnamentsOffered (0.4) == 0 && fg::perfOrnamentsOffered (0.5) == 0);
+        CHECK (fg::perfOrnamentsOffered (0.55) == 7 && fg::perfOrnamentsOffered (0.67) == 7);
+        CHECK (fg::perfOrnamentsOffered (0.68) == 14 && fg::perfOrnamentsOffered (0.84) == 14);
+        CHECK (fg::perfOrnamentsOffered (0.85) == 15 && fg::perfOrnamentsOffered (1.0) == 15);
+
+        // all knobs at 0: the step comes back unchanged and nothing is chosen
+        {
+            fg::Step st; st.note = 20; st.gate = 77; st.slew = 5; st.ratchet = 2; st.mod = 9;
+            const auto r = fg::performStep (st, 123, 99, 0, {});
+            CHECK (r.step == st && r.stepIfNoOrnament == st && r.ornament == -1);
+        }
+
+        // the same step counter and seed always give the same answer, and different counters differ
+        {
+            fg::Step st; st.note = 20;
+            const fg::PerformKnobs k { 0.4, 0.4, 0.4 };
+            int different = 0;
+            for (long long i = 0; i < 400; ++i)
+            {
+                const auto a = fg::performStep (st, i, 5, 3, k), b = fg::performStep (st, i, 5, 3, k);
+                CHECK (a.step == b.step && a.stepIfNoOrnament == b.stepIfNoOrnament && a.ornament == b.ornament);
+                if (! (a.step == fg::performStep (st, i + 1, 5, 3, k).step)) ++different;
+            }
+            CHECK (different > 100);
+        }
+
+        // Ratchet FX: zone 1 only x2 x3 x4 x6, about half the steps at the knob's quarter; zone 2 every step the same
+        {
+            fg::Step st;
+            int hit = 0, bad = 0;
+            for (long long i = 0; i < 4000; ++i)
+            {
+                const auto r = fg::performStep (st, i, 3, 0, { 0.25, 0.0, 0.0 });
+                if (r.step.ratchet != 0) { ++hit; if (r.step.ratchet < 1 || r.step.ratchet > 4) ++bad; }
+                CHECK (r.step.note == st.note && r.step.gate == st.gate && r.step.slew == st.slew);
+            }
+            CHECK (bad == 0 && hit > 1800 && hit < 2200);
+            for (long long i = 0; i < 100; ++i)
+                CHECK (fg::performStep (st, i, 3, 0, { 1.0, 0.0, 0.0 }).step.ratchet == fg::kRatchetMax);
+            st.ratchet = 3;                                                     // zone 2 replaces a stored ratchet, even with x1
+            CHECK (fg::performStep (st, 1, 3, 0, { 0.5001, 0.0, 0.0 }).step.ratchet == 0);
+        }
+
+        // Slew FX
+        {
+            fg::Step st; st.slew = 0;
+            int hit = 0, bad = 0;
+            for (long long i = 0; i < 4000; ++i)
+            {
+                const auto r = fg::performStep (st, i, 4, 0, { 0.0, 0.25, 0.0 });
+                if (r.step.slew != 0) { ++hit; if (r.step.slew < 10 || r.step.slew > 100) ++bad; }
+            }
+            CHECK (bad == 0 && hit > 1800 && hit < 2200);
+            for (long long i = 0; i < 50; ++i)
+                CHECK (fg::performStep (st, i, 4, 0, { 0.0, 0.75, 0.0 }).step.slew == 50 && fg::performStep (st, i, 4, 0, { 0.0, 1.0, 0.0 }).step.slew == 100);
+        }
+
+        // Mutate FX zone 1: only note and gate fields change; a chance; no ornaments
+        {
+            fg::Step st; st.note = 24; st.gate = 50; st.slew = 11; st.ratchet = 1; st.mod = 33;
+            int changed = 0, ornaments = 0;
+            for (long long i = 0; i < 4000; ++i)
+            {
+                const auto r = fg::performStep (st, i, 8, 0, { 0.0, 0.0, 0.25 });
+                if (! (r.step == st)) ++changed;
+                if (r.ornament >= 0) ++ornaments;
+                CHECK (r.step.slew == st.slew && r.step.ratchet == st.ratchet && r.step.mod == st.mod);
+            }
+            CHECK (ornaments == 0 && changed > 1500 && changed < 2200);
+        }
+        // zone 2: ornaments at the knob's chance, only from the offered group
+        {
+            fg::Step st;
+            for (double knob : { 0.6, 0.75, 0.9 })
+            {
+                int orn = 0, outside = 0;
+                const int offered = fg::perfOrnamentsOffered (knob);
+                int seen[fg::kNumOrnaments] = {};
+                for (long long i = 0; i < 6000; ++i)
+                {
+                    const auto r = fg::performStep (st, i, 2, 0, { 0.0, 0.0, knob });
+                    if (r.ornament >= 0) { ++orn; ++seen[r.ornament]; if (r.ornament >= offered) ++outside; }
+                }
+                const double p = fg::perfOrnamentChance (knob);
+                CHECK (outside == 0 && std::fabs ((double) orn / 6000.0 - p) < 0.03);
+                for (int kd = 0; kd < offered; ++kd) CHECK (seen[kd] > 6000 * p / offered * 0.6);
+            }
+            // when no ornament comes up, a note change happens with the same chance
+            int noOrn = 0, noteChanged = 0;
+            for (long long i = 0; i < 8000; ++i)
+            {
+                const auto r = fg::performStep (st, i, 6, 0, { 0.0, 0.0, 0.75 });
+                if (r.ornament < 0) { ++noOrn; if (r.step.note != st.note) ++noteChanged; CHECK (r.step.on == st.on && r.step.gate == st.gate); }
+            }
+            CHECK (noOrn > 3000 && std::fabs ((double) noteChanged / noOrn - 0.5) < 0.08);
+        }
+
+        // the ornament list: names, lengths in notes and steps
+        CHECK (fg::kNumOrnaments == 15 && fg::ornamentNotes (fg::kOrnAnticipation) == 2 && fg::ornamentNotes (fg::kOrnHalfTurnAway) == 2
+               && fg::ornamentNotes (fg::kOrnRunToward) == 4 && fg::ornamentNotes (fg::kOrnMordentDown) == 4 && fg::ornamentNotes (fg::kOrnTrill) == 8);
+        CHECK (fg::ornamentSteps (fg::kOrnSyncopation) == 1 && fg::ornamentSteps (fg::kOrnTurn) == 2 && fg::ornamentSteps (fg::kOrnTrill) == 4);
+        CHECK (std::string (fg::ornamentName (fg::kOrnTrill)) == "Trill" && std::string (fg::ornamentName (fg::kOrnHalfTurnToward)) == "Half Turn Toward");
+
+        // what each ornament plays (Major: 7 notes per octave; the degrees are running degree numbers)
+        {
+            int o[fg::kMaxOrnamentNotes];
+            auto plan = [&] (int kind, int cur, int next, int prev) { return fg::ornamentPlan (kind, cur, next, prev, 0, o); };
+            CHECK (plan (fg::kOrnAnticipation, 10, 14, 8) == 2 && o[0] == 10 && o[1] == 14);
+            CHECK (plan (fg::kOrnAnticipation, 10, -1, 8) == 0);
+            CHECK (plan (fg::kOrnSuspension, 10, 14, 8) == 2 && o[0] == 8 && o[1] == 10);
+            CHECK (plan (fg::kOrnSuspension, 10, 14, -1) == 0);
+            CHECK (plan (fg::kOrnSyncopation, 10, 14, 8) == 2 && o[0] == fg::kOrnRest && o[1] == 10);
+            CHECK (plan (fg::kOrnOctaveUp, 10, 14, 8) == 2 && o[0] == 10 && o[1] == 17);
+            CHECK (plan (fg::kOrnFifthUp, 10, 14, 8) == 2 && o[0] == 10 && o[1] == 14);                    // Major: 4 degrees up is 7 semitones
+            CHECK (plan (fg::kOrnHalfTurnToward, 10, 14, 8) == 2 && o[0] == 10 && o[1] == 15);              // one beyond the next note, going up
+            CHECK (plan (fg::kOrnHalfTurnToward, 10, 6, 8) == 2 && o[0] == 10 && o[1] == 5);                // going down
+            CHECK (plan (fg::kOrnHalfTurnToward, 10, -1, 8) == 0);
+            CHECK (plan (fg::kOrnHalfTurnAway, 10, 14, 8) == 2 && o[0] == 10 && o[1] == 9);                 // next is above: away is below
+            CHECK (plan (fg::kOrnHalfTurnAway, 10, 6, 8) == 2 && o[0] == 10 && o[1] == 11);
+            CHECK (plan (fg::kOrnRunToward, 10, 14, 8) == 4 && o[0] == 10 && o[1] == 11 && o[2] == 12 && o[3] == 13);
+            CHECK (plan (fg::kOrnRunToward, 10, 6, 8) == 4 && o[1] == 9 && o[3] == 7);
+            CHECK (plan (fg::kOrnRunAway, 10, 14, 8) == 4 && o[1] == 9 && o[3] == 7);
+            CHECK (plan (fg::kOrnTurn, 10, 14, 8) == 4 && o[0] == 10 && o[1] == 11 && o[2] == 9 && o[3] == 10);
+            CHECK (plan (fg::kOrnArpToward, 10, 14, 8) == 4 && o[0] == 10 && o[1] == 12 && o[2] == 14 && o[3] == 16);
+            CHECK (plan (fg::kOrnArpAway, 10, 14, 8) == 4 && o[1] == 8 && o[2] == 6 && o[3] == 4);
+            CHECK (plan (fg::kOrnMordentUp, 10, 14, 8) == 4 && o[0] == 10 && o[1] == 11 && o[2] == 10 && o[3] == 11);
+            CHECK (plan (fg::kOrnMordentDown, 10, 14, 8) == 4 && o[1] == 9 && o[3] == 9);
+            CHECK (plan (fg::kOrnTrill, 10, 14, 8) == 8 && o[0] == 10 && o[1] == 11 && o[6] == 10 && o[7] == 11);
+            // the ends of the range: every note stays inside it
+            for (int kind = 0; kind < fg::kNumOrnaments; ++kind)
+                for (int cur : { 0, 1, 34 })
+                {
+                    const int c = fg::ornamentPlan (kind, cur, cur == 34 ? 30 : 5, 3, 0, o);
+                    for (int i = 0; i < c; ++i) CHECK (o[i] == fg::kOrnRest || (o[i] >= 0 && o[i] <= fg::degreeCount (0) - 1));
+                }
+            // Fifth Up in a five-note scale: the degree nearest to seven semitones above (Major Pentatonic: C D E G A, G is 7 above C)
+            CHECK (fg::ornamentPlan (fg::kOrnFifthUp, 0, 5, 3, 16, o) == 2 && o[1] == 3);
         }
     }
 

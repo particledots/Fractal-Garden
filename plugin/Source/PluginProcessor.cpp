@@ -29,6 +29,9 @@ FractalGardenProcessor::FractalGardenProcessor()
     microRatchetParam = apvts.getRawParameterValue (fg::id::microRatchet);
     microSlewParam = apvts.getRawParameterValue (fg::id::microSlew);
     microModParam = apvts.getRawParameterValue (fg::id::microMod);
+    perfRatchetParam = apvts.getRawParameterValue (fg::id::perfRatchet);
+    perfSlewParam = apvts.getRawParameterValue (fg::id::perfSlew);
+    perfMutateParam = apvts.getRawParameterValue (fg::id::perfMutate);
     reseedScopeParam = apvts.getRawParameterValue (fg::id::reseedScope);
     pendRepeatParam = apvts.getRawParameterValue (fg::id::pendRepeat);
     chanceParams[fg::ChanceMix::Forward]  = apvts.getRawParameterValue (fg::id::chanceForward);
@@ -404,6 +407,9 @@ void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     settings.microRatchet = microRatchetParam->load();
     settings.microSlew = microSlewParam->load();
     settings.microMod = microModParam->load();
+    settings.perfRatchet = perfRatchetParam->load();       // Performance mode: temporary effects played over the steps (never stored)
+    settings.perfSlew = perfSlewParam->load();
+    settings.perfMutate = perfMutateParam->load();
     const int numEvents = player.process (sampleRate.load(), numSamples, host, settings, audioSteps, audioBranchSource, events, kMaxEvents);
 
     // Changes Mutate made to trunk steps go to the window thread, which saves them.

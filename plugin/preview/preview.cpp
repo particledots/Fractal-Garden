@@ -1076,6 +1076,34 @@ int main (int argc, char** argv)
             expect (p->getSteps() == edited, "UNMUTATE undoes Micro Mutate");
         }
 
+        // -- Performance mode (milestone 8): the three knobs reach the player, change nothing that is stored, and work in any Knob Mode --
+        {
+            MockHost host;
+            auto p = makeProc (host);
+            const auto edited = p->getSteps();
+            std::vector<int> plain;
+            play (*p, host, 6000 * 16, 0.0, &plain);
+            expect (plain.size() >= 14 && plain.size() <= 17, "Performance: knobs at 0 play one note per step: " + juce::String ((int) plain.size()));
+
+            setParam (*p, fg::id::perfRatchet, 1.0f);                       // zone 2, top band: x32 on every step
+            std::vector<int> fast;
+            play (*p, host, 6000 * 16, 0.0, &fast);
+            expect (fast.size() >= 16 * 8, "Ratchet FX at the top ratchets every step: " + juce::String ((int) fast.size()));
+            setParam (*p, fg::id::perfRatchet, 0.0f);
+
+            setParam (*p, fg::id::perfMutate, 1.0f);                        // ornaments with trills
+            setParam (*p, fg::id::knobMode, 0);                             // another Knob Mode is showing; the knob still acts
+            std::vector<int> orn;
+            play (*p, host, 6000 * 64, 0.0, &orn);
+            letWindowThreadRun (300);
+            expect (orn.size() > 64, "Mutate FX in the upper half adds ornament notes: " + juce::String ((int) orn.size()));
+            expect (p->getSteps() == edited, "Performance effects never change the stored steps");
+            setParam (*p, fg::id::perfMutate, 0.0f);
+            std::vector<int> back;
+            play (*p, host, 6000 * 16, 0.0, &back);
+            expect (back == plain, "knobs back at 0 give the original notes again");
+        }
+
         // -- Reseed: page or all 64; each button changes its own thing; UNMUTATE undoes it; Reseed is not an edit --
         {
             MockHost host;

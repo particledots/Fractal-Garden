@@ -2,6 +2,7 @@
 
 #include <fg/Branch.h>
 #include <fg/Mod.h>
+#include <fg/Perform.h>
 #include <fg/Steps.h>
 
 #include <cmath>
@@ -650,24 +651,28 @@ FractalGardenStyledPanel::FractalGardenStyledPanel (FractalGardenProcessor& p, c
     add (fg::id::perfRatchet, "RATCHET FX", rose,
          [] (double v)
          {
-             return v < 0.5 ? "chance " + juce::String (roundedInt ((float) (v / 0.5 * 100.0))) + " %"
-                            : "fixed x" + juce::String (2 + roundedInt ((float) ((v - 0.5) / 0.5 * 6.0)));
+             if (v <= 0.0)                return juce::String ("off");
+             if (! fg::perfInZone2 (v))   return "random " + juce::String (roundedInt ((float) (fg::perfChance (v) * 100.0))) + " % (x2-x6)";
+             return "fixed x" + juce::String (fg::kRatchetAmounts[fg::perfFixedRatchet (v)]) + " on every step";
          },
-         [] { return juce::String ("RANDOM | FIXED x2 ..."); }, { 0.5 }, 0);
+         [] { return juce::String ("RANDOM | FIXED x1 ... x32"); }, { 0.5 }, 0);
     add (fg::id::perfSlew, "SLEW FX", rose,
          [] (double v)
          {
-             return v < 0.5 ? "chance " + juce::String (roundedInt ((float) (v / 0.5 * 100.0))) + " %"
-                            : "fixed " + juce::String (roundedInt ((float) ((v - 0.5) / 0.5 * 100.0))) + " %";
+             if (v <= 0.0)                return juce::String ("off");
+             if (! fg::perfInZone2 (v))   return "random " + juce::String (roundedInt ((float) (fg::perfChance (v) * 100.0))) + " %";
+             return "fixed " + juce::String (fg::perfFixedSlew (v)) + " % on every step";
          },
          [] { return juce::String ("RANDOM | FIXED SLIDE"); }, { 0.5 }, 1);
     add (fg::id::perfMutate, "MUTATE FX", rose,
          [] (double v)
          {
-             if (v < 0.5)  return "mutate " + juce::String (roundedInt ((float) (v / 0.5 * 100.0))) + " %";
-             if (v < 0.67) return juce::String ("2-step ornaments");
-             if (v < 0.84) return juce::String ("4-step ornaments");
-             return juce::String ("max + trills");
+             if (v <= 0.0)                return juce::String ("off");
+             if (! fg::perfInZone2 (v))   return "mutate " + juce::String (roundedInt ((float) (fg::perfChance (v) * 100.0))) + " %";
+             const auto pct = juce::String (roundedInt ((float) (fg::perfOrnamentChance (v) * 100.0))) + " %";
+             if (v <= fg::kPerfTwoNoteTop)  return "ornaments " + pct + ", 2-note";
+             if (v <= fg::kPerfFourNoteTop) return "ornaments " + pct + ", +4-note";
+             return "ornaments " + pct + ", +trills";
          },
          [] { return juce::String ("MUTATE | ORNAMENTS | TRILLS"); }, { 0.5, 0.67, 0.84 }, 2);
 

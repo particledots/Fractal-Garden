@@ -3,6 +3,15 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
+Version 0.7.0 (milestone 8, Performance mode and ornamentation; automatic checks done 7 November 2026, **waiting for the Logic test**).
+
+- New `fg/Perform.h` / `Perform.cpp`: the zones of Ratchet FX, Slew FX and Mutate FX, the fifteen ornaments (seven two-note, seven four-note, the eight-note trill) and `performStep`, a pure function of (stored step, step counter, seed, knobs): no running random stream, so a step's effect is the same at any block size and when the player looks ahead at the next step.
+- Trunk player: when a step starts, a copy gets the effects and the copy plays (ratchet, slew CC 84 and the glide hold use it). Stored steps, the mutation log, Unmutate and the saved pattern are untouched. Ornaments play eighth notes (half a step each, 80 % long) from the start of their step and take over the steps they cover. With the three knobs at 0 nothing is drawn: the output is identical to 0.6.0.
+- Plugin: the three Performance knobs reach the player (they act whichever Knob Mode is showing); the read-outs name the zone, the fixed ratchet amount (x1 to x32), the fixed slew and the ornament group.
+- Manual gaps: see the project file "Fractal-Garden manual gaps ledger" (G-97 onward; G-05, G-14, G-20 and G-21 revised).
+- No new controls; all 46 ids unchanged.
+- Checks: engine 179,652; clock 6,404,027; window and plugin test 338 (new: Performance knobs reach the player, stored steps unchanged, knobs back at 0 restore the notes); byte-for-byte comparison with 0.6.0 at knobs 0 (120 runs).
+
 Version 0.6.0 (milestones 6 and 7 merged: Branch, Path, Mutate, Micro Mutate, Reseed, Unmutate, TREE letters; **tested in Logic on 7 November 2026: "all looks good", finished**).
 
 - New `fg/Mutate.h` / `Mutate.cpp`: seeded random generator, Default Mutate (two zones), Micro Mutate, Reseed ranges for every kind.

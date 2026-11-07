@@ -1555,6 +1555,263 @@ int main()
         }
     }
 
+    // ---- Milestone 8: Performance mode (Ratchet FX, Slew FX, Mutate FX and ornaments) ----
+    {
+        const double kStep = 0.25;                      // quarters per 1/16 step
+        const long long kStepSamples = 6000;            // at 120 bpm, 48 kHz
+        auto perfRun = [&] (double ratchet, double slew, double mutate, int block, long long steps, int length = 8)
+        {
+            Run r = makeRun (kStepSamples * steps);
+            r.block = block;
+            r.settings = [=] (long long) { fg::PlayerSettings s = plainSettings(); s.length = length; s.seed = 77; s.sendCc = true;
+                                           s.perfRatchet = ratchet; s.perfSlew = slew; s.perfMutate = mutate; return s; };
+            return r;
+        };
+
+        // the three knobs at 0 change nothing (identical to a run that never heard of them)
+        {
+            fg::TrunkPlayer a, b;
+            Run r0 = makeRun (kStepSamples * 32);
+            r0.settings = [=] (long long) { fg::PlayerSettings st = plainSettings(); st.length = 8; st.seed = 77; st.sendCc = true; return st; };     // never sets the three knobs
+            const auto plain = simulate (a, r0);
+            Run r1 = perfRun (0.0, 0.0, 0.0, 512, 32);
+            CHECK (sameEvents (plain, simulate (b, r1), 0));
+        }
+
+        // RATCHET FX zone 2: one fixed amount for every step, eight equal bands for x1 x2 x3 x4 x6 x8 x16 x32
+        for (int band = 0; band < fg::kNumRatchets; ++band)
+        {
+            const double knob = 0.5 + 0.5 * ((double) band + 0.5) / 8.0;
+            fg::TrunkPlayer p;
+            const auto ev = simulate (p, perfRun (knob, 0.0, 0.0, 512, 8));
+            CHECK (fg::perfFixedRatchet (knob) == band);
+            CHECK (analyse (ev).ok && analyse (ev).sounding <= 1);
+            CHECK (analyse (ev).ons == 8 * fg::kRatchetAmounts[band]);
+        }
+
+        // RATCHET FX zone 1: a chance; amounts x2 x3 x4 x6 only; none at 0, nearly every step at 0.5
+        {
+            fg::TrunkPlayer p;
+            const auto full = simulate (p, perfRun (0.5, 0.0, 0.0, 512, 64));
+            int maxPerStep = 0;
+            std::vector<int> per (64, 0);
+            for (const auto& e : full) if (e.on) { const int k = (int) std::floor (e.ppq / kStep + 1e-6); if (k >= 0 && k < 64) ++per[(std::size_t) k]; }
+            for (int c : per) maxPerStep = std::max (maxPerStep, c);
+            bool allowed = true;
+            for (int c : per) allowed = allowed && (c == 2 || c == 3 || c == 4 || c == 6);
+            CHECK (allowed && maxPerStep <= 6);
+            fg::TrunkPlayer q;
+            const auto half = simulate (q, perfRun (0.25, 0.0, 0.0, 512, 64));
+            const int onsHalf = analyse (half).ons;
+            CHECK (onsHalf > 64 + 8 && onsHalf < 64 * 4);                                  // some steps ratcheted, not all
+        }
+
+        // SLEW FX: zone 2 fixed slew goes out as CC 84 (knob 1.0 = 100 % = 127, 0.75 = 50 % = 64); steps are held into each other for the glide
+        for (const auto& pair : { std::pair<double, int> { 1.0, 127 }, std::pair<double, int> { 0.75, 64 } })
+        {
+            fg::TrunkPlayer p;
+            const auto ev = simulate (p, perfRun (0.0, pair.first, 0.0, 512, 16));
+            bool right = false, wrong = false;
+            for (const auto& e : ev) if (e.cc == 84) { if (e.value == pair.second) right = true; else wrong = true; }
+            CHECK (right && ! wrong);
+            CHECK (analyse (ev, true).ok);
+        }
+        {
+            fg::TrunkPlayer p;
+            const auto ev = simulate (p, perfRun (0.0, 0.5, 0.0, 512, 64));                 // zone 1 at 100 %: random slew, 10 to 100 %
+            int ccs = 0, bad = 0;
+            for (const auto& e : ev) if (e.cc == 84) { ++ccs; if (e.value != 0 && (e.value < 13 || e.value > 127)) ++bad; }
+            CHECK (ccs >= 8 && bad == 0);
+            CHECK (analyse (ev, true).ok);
+        }
+
+        // MUTATE FX zone 1: notes and gates change temporarily; the stored steps never do
+        {
+            fg::TrunkPlayer p;
+            Run r = perfRun (0.0, 0.0, 0.5, 512, 64);
+            const auto ev = simulate (p, r);
+            const fg::StepData before = makeData();
+            CHECK (r.data == before);                                                      // the player only read the data
+            int changedNotes = 0;
+            for (const auto& e : ev) if (e.on) { const int k = (int) std::lround (e.ppq / kStep); if (k >= 0 && e.note != 48 + (int) floorMod (k, 8)) ++changedNotes; }
+            CHECK (changedNotes >= 8);
+            CHECK (analyse (ev).ok);
+        }
+        // and with the writable trunk the steps and the mutation log stay untouched too
+        {
+            fg::TrunkPlayer p;
+            fg::StepData live = makeData(), snapshot = makeData();
+            std::vector<fg::NoteEvent> buf (4096);
+            fg::PlayerSettings s = plainSettings();
+            s.perfRatchet = 0.9; s.perfSlew = 0.8; s.perfMutate = 0.95; s.sendCc = true; s.seed = 5;
+            for (int i = 0; i < 400; ++i)
+            {
+                fg::HostBlock h; h.playing = true; h.havePpq = true; h.bpm = kBpm; h.ppq = (double) i * 512 * kPps;
+                p.process (kSr, 512, h, s, live, snapshot, buf.data(), 4096);
+            }
+            fg::MutationEvent log[8];
+            CHECK (live == makeData() && p.takeMutations (log, 8) == 0);
+        }
+
+        // the same notes at the same samples at any block size, for every combination of the three knobs
+        for (double ratchet : { 0.0, 0.3, 0.8 })
+            for (double slew : { 0.0, 0.4, 0.9 })
+                for (double mutate : { 0.0, 0.4, 0.6, 0.75, 0.9, 1.0 })
+                {
+                    fg::TrunkPlayer p0;
+                    const auto reference = simulate (p0, perfRun (ratchet, slew, mutate, 512, 96, 12));
+                    CHECK (analyse (reference, true).ok);
+                    for (int block : { 1, 77, 480, 4096, 8192 })
+                    {
+                        fg::TrunkPlayer p;
+                        Run r = perfRun (ratchet, slew, mutate, block, 96, 12);
+                        if (block == 1) r.total = kStepSamples * 12;
+                        const auto ev = simulate (p, r);
+                        if (block == 1)
+                        {
+                            // only the first 12 steps at block size 1: compare with the same part of the reference
+                            std::vector<Ev> head;
+                            for (const auto& e : reference) if (e.t < r.total - 2) head.push_back (e);
+                            std::vector<Ev> got;
+                            for (const auto& e : ev) if (e.t < r.total - 2) got.push_back (e);
+                            CHECK (sameEvents (head, got, 0));
+                        }
+                        else
+                            CHECK (sameEvents (reference, ev, 0));
+                    }
+                }
+
+        // ORNAMENTS: exactly the notes the plan says, at the eighth-note positions, step by step (every step ON, forward order, length 8)
+        {
+            const int length = 8;
+            const std::uint32_t perfSeed = 77u ^ 0x5e11f0f5u;
+            const fg::StepData d = makeData();
+            for (double knob : { 0.6, 0.75, 0.95, 1.0 })
+            {
+                fg::TrunkPlayer p;
+                const long long steps = 160;
+                const auto ev = simulate (p, perfRun (0.0, 0.0, knob, 512, steps, length));
+                CHECK (analyse (ev).ok && analyse (ev).sounding <= 1);
+
+                struct Exp { double ppq; int note; };
+                std::vector<Exp> expected;
+                int swallow = 0, ornaments = 0;
+                std::vector<int> kindsSeen (fg::kNumOrnaments, 0);
+                for (long long k = 0; k < steps; ++k)
+                {
+                    if (swallow > 0) { --swallow; continue; }
+                    const fg::Step& stored = d.steps[(std::size_t) floorMod (k, length)];
+                    const auto pr = fg::performStep (stored, k, perfSeed, kChromatic, { 0.0, 0.0, knob });
+                    fg::Step step = pr.step;
+                    bool done = false;
+                    if (pr.ornament >= 0)
+                    {
+                        const fg::Step& nx = d.steps[(std::size_t) floorMod (k + 1, length)];
+                        const fg::Step& pv = d.steps[(std::size_t) floorMod (k - 1, length)];
+                        int degrees[fg::kMaxOrnamentNotes];
+                        const int cnt = fg::ornamentPlan (pr.ornament, fg::storedToDegree (stored.note, kChromatic),
+                                                          fg::storedToDegree (nx.note, kChromatic), fg::storedToDegree (pv.note, kChromatic), kChromatic, degrees);
+                        if (cnt > 0)
+                        {
+                            ++ornaments; ++kindsSeen[(std::size_t) pr.ornament];
+                            CHECK (cnt == fg::ornamentNotes (pr.ornament));
+                            for (int i = 0; i < cnt; ++i)
+                                if (degrees[i] != fg::kOrnRest)
+                                    expected.push_back ({ (double) k * kStep + (double) i * kStep / 2.0, fg::pitchFor (fg::degreeToStored (degrees[i], kChromatic), kChromatic, 0, 0) });
+                            swallow = fg::ornamentSteps (pr.ornament) - 1;
+                            done = true;
+                        }
+                        else
+                            step = pr.stepIfNoOrnament;
+                    }
+                    if (! done)
+                        expected.push_back ({ (double) k * kStep, fg::pitchFor (step.note, kChromatic, 0, 0) });
+                }
+                std::vector<Ev> got;
+                for (const auto& e : ev) if (e.on) got.push_back (e);
+                bool match = true;
+                std::size_t compared = 0;
+                for (std::size_t i = 0; i < got.size() && i < expected.size(); ++i)
+                {
+                    ++compared;
+                    if (got[i].note != expected[i].note || std::fabs (got[i].ppq - expected[i].ppq) > 1e-4) match = false;
+                }
+                CHECK (match && compared >= 100);
+                CHECK (std::abs ((int) got.size() - (int) expected.size()) <= 0);
+                CHECK (ornaments >= 10);
+                if (knob >= 0.95)
+                {
+                    int kinds = 0;
+                    for (int c : kindsSeen) kinds += c > 0;
+                    CHECK (kinds >= 12);
+                }
+                // an ornament note is 80 % of an eighth: every note-off is 0.8 of an eighth after its note-on (no ratchets here)
+                bool lengthsOk = true;
+                for (std::size_t i = 0; i + 1 < ev.size(); ++i)
+                    if (ev[i].cc < 0 && ev[i].on && i + 1 < ev.size() && ev[i + 1].cc < 0 && ! ev[i + 1].on && ev[i + 1].note == ev[i].note)
+                    {
+                        const double len = (double) (ev[i + 1].t - ev[i].t) / 24000.0;          // quarters
+                        if (std::fabs (len - 0.5 * 0.125) > 0.001 && std::fabs (len - 0.125 * 0.8) > 0.001 && std::fabs (len - 0.25 * 0.5) > 0.001)
+                            lengthsOk = false;
+                    }
+                CHECK (lengthsOk);
+            }
+        }
+
+        // the ornament and the other performance steps end cleanly: nothing left sounding after Logic stops, jumps or cycles
+        {
+            fg::TrunkPlayer p;
+            fg::StepData d = makeData();
+            std::vector<fg::NoteEvent> buf (4096);
+            fg::PlayerSettings s = plainSettings();
+            s.perfMutate = 1.0; s.perfRatchet = 0.2; s.perfSlew = 0.3; s.sendCc = true; s.seed = 9;
+            std::vector<int> sounding;
+            auto feed = [&] (const fg::HostBlock& h, int n)
+            {
+                const int c = p.process (kSr, n, h, s, d, buf.data(), 4096);
+                for (int i = 0; i < c; ++i)
+                    if (buf[(std::size_t) i].cc < 0)
+                    {
+                        if (buf[(std::size_t) i].on) sounding.push_back (buf[(std::size_t) i].note);
+                        else { auto it = std::find (sounding.begin(), sounding.end(), buf[(std::size_t) i].note); if (it != sounding.end()) sounding.erase (it); }
+                    }
+            };
+            for (int round = 0; round < 40; ++round)
+            {
+                const double start = 0.37 * round;                                           // an odd place in a step each time
+                for (int i = 0; i < 20; ++i)
+                {
+                    fg::HostBlock h; h.playing = true; h.havePpq = true; h.bpm = kBpm; h.ppq = start + i * 500 * kPps;
+                    feed (h, 500);
+                }
+                fg::HostBlock stopped; stopped.playing = false; stopped.havePpq = true;
+                feed (stopped, 256);
+                CHECK (sounding.empty());
+            }
+            // a jump in the middle of an ornament
+            for (int round = 0; round < 40; ++round)
+            {
+                for (int i = 0; i < 6; ++i)
+                {
+                    fg::HostBlock h; h.playing = true; h.havePpq = true; h.bpm = kBpm; h.ppq = 100.0 + round * 7.1 + i * 700 * kPps;
+                    feed (h, 700);
+                }
+            }
+            fg::HostBlock stopped; stopped.playing = false; stopped.havePpq = true;
+            feed (stopped, 256);
+            CHECK (sounding.empty());
+        }
+
+        // two instances with the same settings agree (the effects depend only on the song position and the seed)
+        {
+            fg::TrunkPlayer a, b;
+            const auto ea = simulate (a, perfRun (0.7, 0.6, 0.9, 512, 64));
+            Run late = perfRun (0.7, 0.6, 0.9, 700, 64);
+            const auto eb = simulate (b, late);
+            CHECK (sameEvents (ea, eb, 0));
+        }
+    }
+
     std::printf ("clock tests: %d checks passed\n", checks - failures);
     if (failures > 0)
     {

@@ -37,6 +37,8 @@ namespace fg
         gateOffPpq = -1.0;
         heldNote = 0;
         stepActive = false;
+        ornActive = false;
+        swallowLeft = 0;
         lastCc1 = lastCc84 = -1;
         sampleClock = 0;
         nextTickAbs = 0;
@@ -62,6 +64,8 @@ namespace fg
         wasRunning = false;           // the next block starts over (it is treated like a start)
         anchorK = 0;
         stepActive = false;
+        ornActive = false;
+        swallowLeft = 0;
         lastCc1 = lastCc84 = -1;
         isRunning.store (false);
         shownStep.store (-1);
@@ -174,6 +178,8 @@ namespace fg
             wasRunning = false;
             anchorK = 0;
             stepActive = false;
+            ornActive = false;
+            swallowLeft = 0;
             lastCc1 = lastCc84 = -1;
             ccRingPos = ccRingCount = 0;
             seenResetCount = settings.resetCount;       // RESET while stopped has nothing to restart
@@ -199,6 +205,10 @@ namespace fg
                 builtPath = path; builtLength = length; builtScale = scale;
             }
         }
+        const PerformKnobs perf { settings.perfRatchet, settings.perfSlew, settings.perfMutate };
+        const bool performing = perf.any();
+        const std::uint32_t perfSeed = settings.seed ^ 0x5e11f0f5u;
+        const int perfScale = std::clamp (settings.scale, 0, kNumScales - 1);
         const bool mutating = settings.mutate > 0.0 || settings.microRatchet > 0.0 || settings.microSlew > 0.0 || settings.microMod > 0.0;
 
         // Where step counter value kk plays: which section (0 = trunk, 1.. = branch) and which step of it.
@@ -237,6 +247,8 @@ namespace fg
         {
             anchorK = 0;                                // a start, a jump or a cycle: back to Logic's bars
             stepActive = false;
+            ornActive = false;
+            swallowLeft = 0;
             lastCc1 = lastCc84 = -1;                    // the next values are sent whatever they are
             if (! wasRunning)
                 ccRingPos = ccRingCount = 0;
@@ -283,6 +295,14 @@ namespace fg
                     tPulse = pt;
             }
 
+            double tOrn = kNever;
+            if (ornActive && ornNext < ornCount)
+            {
+                const double ot = ornStart + (double) ornNext * ornSlot;
+                if (ot < ppq1 - eps)
+                    tOrn = ot;
+            }
+
             double tTick = kNever;
             long long tickAbs = 0;
             if (settings.sendCc && stepActive && modMoves (settings))
@@ -295,7 +315,7 @@ namespace fg
                     tTick = tp;
             }
 
-            const double tNext = std::min (std::min (tBoundary, tOff), std::min (tPulse, tTick));
+            const double tNext = std::min (std::min (std::min (tBoundary, tOff), std::min (tPulse, tTick)), tOrn);
             if (tNext >= kNever)
                 break;
 
@@ -332,7 +352,38 @@ namespace fg
                             mutLog[mutLogCount++] = MutationEvent { settings.epoch, index, stored };
                     }
                 }
-                const Step step = stored;                   // a copy: what plays is what the step was as it started
+                Step step = stored;                         // a copy: what plays is what the step was as it started
+                // A step inside an ornament that started earlier plays no notes of its own. Otherwise Performance mode may change the copy
+                // (never the stored step), or start an ornament.
+                const bool swallowed = swallowLeft > 0;
+                if (swallowed)
+                    --swallowLeft;
+                int ornamentKind = -1, ornamentCount = 0;
+                int ornamentDegrees[kMaxOrnamentNotes] = {};
+                if (performing && ! swallowed)
+                {
+                    const PerformResult pr = performStep (stored, k, perfSeed, perfScale, perf);
+                    step = pr.step;
+                    if (pr.ornament >= 0)
+                    {
+                        int nextSection, nextIndex, prevSection, prevIndex;
+                        locate (k + 1, nextSection, nextIndex);
+                        locate (k - 1, prevSection, prevIndex);
+                        const Step& nx = stepRef (nextSection, nextIndex);
+                        const Step& pv = stepRef (prevSection, prevIndex);
+                        ornamentCount = ornamentPlan (pr.ornament, storedToDegree (stored.note, perfScale),
+                                                      nx.on ? storedToDegree (nx.note, perfScale) : -1,
+                                                      pv.on ? storedToDegree (pv.note, perfScale) : -1, perfScale, ornamentDegrees);
+                        if (ornamentCount > 0 && stored.on)
+                            ornamentKind = pr.ornament;
+                        else
+                        {
+                            ornamentCount = 0;
+                            step = pr.stepIfNoOrnament;
+                        }
+                    }
+                }
+                const bool ornament = ornamentKind >= 0;
                 shownStep.store (index);
                 shownSection.store (section);
                 stepsStarted.fetch_add (1);
@@ -349,14 +400,14 @@ namespace fg
                     prevLevel = stepLevel (stepRef (prevSection, prevIndex));
                 }
 
-                const int pulses = kRatchetAmounts[std::min (kRatchetMax, (int) step.ratchet)];
+                const int pulses = ornament ? 1 : kRatchetAmounts[std::min (kRatchetMax, (int) step.ratchet)];
                 // A tie: the note that is sounding was left open (gate 100 %, or the next step has slew) and this step plays. A tie needs
                 // room for one more event (the old note's note-off), and a note-on is only written when its own note-off has room too.
                 const bool wantTie = held.load() && gateOffPpq < 0.0;
-                const bool plays = step.on && n + 2 <= maxOut && (! wantTie || n + 3 <= maxOut);
-                const bool tie = plays && wantTie;
-                if (! tie)
-                    release (offset);          // whatever was sounding ends exactly now
+                const bool plays = ! swallowed && step.on && n + 2 <= maxOut && (! wantTie || n + 3 <= maxOut);
+                const bool tie = plays && wantTie && ! ornament;
+                if (! tie && ! swallowed)
+                    release (offset);          // whatever was sounding ends exactly now (inside an ornament, its own notes end themselves)
 
                 stepActive = true;
                 curStep = step;
@@ -397,7 +448,30 @@ namespace fg
                     curPulseNote = note;
                     curPulseVelocity = velocity;
 
-                    if (! (tie && heldNote == note))              // the same pitch tied: no new note, the old one just carries on
+                    if (ornament)
+                    {
+                        // The ornament's notes are eighths of a quarter-note step, so each lasts half a step; the first starts now.
+                        ornActive = true;
+                        ornStart = b;
+                        ornSlot = stepLen / 2.0;
+                        ornWidth = std::min (std::max (kOrnamentGateFraction * ornSlot, minNote), 0.9 * ornSlot);
+                        ornCount = ornamentCount;
+                        ornNext = 1;
+                        ornVelocity = velocity;
+                        for (int i = 0; i < ornamentCount; ++i)
+                            ornNotes[i] = ornamentDegrees[i] == kOrnRest ? -1
+                                        : pitchFor (degreeToStored (ornamentDegrees[i], perfScale), settings.scale, settings.key, settings.root);
+                        swallowLeft = ornamentSteps (ornamentKind) - 1;
+                        if (ornNotes[0] >= 0)
+                        {
+                            emit (offset, true, ornNotes[0], velocity);
+                            held.store (true);
+                            heldNote = ornNotes[0];
+                            notesStarted.fetch_add (1);
+                            gateOffPpq = b + ornWidth;
+                        }
+                    }
+                    else if (! (tie && heldNote == note))              // the same pitch tied: no new note, the old one just carries on
                     {
                         emit (offset, true, note, velocity);
                         if (tie)
@@ -407,7 +481,11 @@ namespace fg
                         notesStarted.fetch_add (1);
                     }
 
-                    if (pulses > 1)
+                    if (ornament)
+                    {
+                        // gateOffPpq was set above: the first ornament note ends inside its eighth
+                    }
+                    else if (pulses > 1)
                     {
                         gateOffPpq = b + curPulseWidth;
                     }
@@ -420,7 +498,9 @@ namespace fg
                             // The next step has slew: hold this note up to it so a mono synth can glide.
                             int nextSection, nextIndex;
                             locate (k + 1, nextSection, nextIndex);
-                            const Step& next = stepRef (nextSection, nextIndex);
+                            Step next = stepRef (nextSection, nextIndex);
+                            if (performing)
+                                next = performStep (next, k + 1, perfSeed, perfScale, perf).step;     // the slew the next step will really have
                             open = next.on && next.slew > 0;
                         }
                         gateOffPpq = open ? -1.0 : b + std::min (std::max (fraction * stepLen, minNote), stepLen);
@@ -444,6 +524,25 @@ namespace fg
                     heldNote = curPulseNote;
                     notesStarted.fetch_add (1);
                     gateOffPpq = pt + curPulseWidth;
+                }
+                continue;
+            }
+
+            if (tOrn <= tNext)
+            {
+                // The next note of the ornament (or a rest).
+                const double ot = ornStart + (double) ornNext * ornSlot;
+                const int offset = toOffset (ot);
+                const int note = ornNotes[ornNext];
+                ++ornNext;
+                if (note >= 0 && n + 2 <= maxOut)
+                {
+                    release (offset);
+                    emit (offset, true, note, ornVelocity);
+                    held.store (true);
+                    heldNote = note;
+                    notesStarted.fetch_add (1);
+                    gateOffPpq = ot + ornWidth;
                 }
                 continue;
             }

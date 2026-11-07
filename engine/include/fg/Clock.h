@@ -36,6 +36,12 @@
 //    change its ratchet, slew and mod. A change to a trunk step is written to the trunk and listed for the wrapper (takeMutations), which
 //    saves it with the project. With every knob at 0 no random numbers are drawn and nothing changes.
 //
+// Milestone 8: PERFORMANCE MODE (fg/Perform.h). When a step starts, a copy of it gets Ratchet FX, Slew FX and Mutate FX and the copy is what
+// plays; the stored step, the mutation log and the saved pattern are never touched. The effect for a step depends only on (seed, step counter),
+// so it is the same at any block size. An ORNAMENT plays its eighth notes (half a step each) from the start of its step and takes over the steps
+// it covers: the player counts those steps down (swallowLeft) and plays no notes for them. With the three knobs at 0 nothing is drawn and the
+// output is the same as 0.6.0.
+//
 // RESET: the step that starts next is played as step 1 of the order and counting goes on from there. Because the order is worked out
 // from (step counter - anchor), nothing else changes. The anchor is forgotten whenever Logic stops, jumps or cycles, so starting
 // playback always locks the pattern back to the song's bars.
@@ -46,6 +52,7 @@
 #include <fg/Mod.h>
 #include <fg/Mutate.h>
 #include <fg/Orders.h>
+#include <fg/Perform.h>
 #include <fg/Pitch.h>
 #include <fg/Steps.h>
 
@@ -95,6 +102,10 @@ namespace fg
         double microRatchet = 0.0;
         double microSlew = 0.0;
         double microMod = 0.0;
+
+        double perfRatchet = 0.0;        // Performance mode (milestone 8): temporary effects, they never change the stored steps
+        double perfSlew = 0.0;
+        double perfMutate = 0.0;
     };
 
     // A change the player made to a trunk step (Mutate or Micro Mutate): the wrapper writes it into the saved steps.
@@ -178,6 +189,14 @@ namespace fg
         int curPulses = 1, nextPulse = 1;    // ratchet: how many notes in the step, and which one starts next
         double curSlot = 0.25, curPulseWidth = 0.0;
         int curPulseNote = 60, curPulseVelocity = 100;
+
+        // ornaments (Performance mode)
+        bool ornActive = false;
+        int swallowLeft = 0;                 // steps still covered by an ornament that started on an earlier step: they play no notes of their own
+        double ornStart = 0.0, ornSlot = 0.125, ornWidth = 0.1;
+        int ornCount = 0, ornNext = 1;       // notes in the ornament, and which one starts next
+        int ornNotes[kMaxOrnamentNotes] = {};   // MIDI notes, -1 for a rest
+        int ornVelocity = 100;
 
         // CC output
         int lastCc1 = -1, lastCc84 = -1;     // the last values sent (-1: send the next one whatever it is)

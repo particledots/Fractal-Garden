@@ -169,6 +169,9 @@ private:
     std::atomic<float>* microRatchetParam = nullptr;
     std::atomic<float>* microSlewParam = nullptr;
     std::atomic<float>* microModParam = nullptr;
+    std::atomic<float>* perfRatchetParam = nullptr;     // Performance mode (milestone 8)
+    std::atomic<float>* perfSlewParam = nullptr;
+    std::atomic<float>* perfMutateParam = nullptr;
     std::atomic<float>* reseedScopeParam = nullptr;
     std::atomic<float>* pendRepeatParam = nullptr;
     std::atomic<float>* chanceParams[fg::ChanceMix::kNumModes] = {};
