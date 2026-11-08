@@ -92,7 +92,14 @@ public:
     int getPatternSlot() const;                             // the slot PATTERN shows, 0 to 15
     void savePatternNow (int slot);                         // what the SAVE button does for a slot (also used by the automatic checks)
     void loadPatternNow (int slot);                         // what the LOAD button does for a slot (an empty slot does nothing)
-    int getPatternRevision() const { return patternRevision.load(); }     // goes up whenever a slot changes
+    int getPatternRevision() const { return patternRevision.load(); }     // goes up whenever a slot or the shared file's state changes
+
+    // ---- sharing one pattern between instances (1.1.0) ----
+    void sharePatternNow();                                 // what the SHARE button does: the steps and LENGTH go into the shared file
+    void grabPatternNow();                                  // what the GRAB button does: the shared file's steps and LENGTH replace this instance's (like LOAD)
+    juce::String getSharedText() const;                     // one line for the panel: the shared file's state, or why the last SHARE / GRAB did not work
+    juce::File getSharedPatternFile() const;                // the file SHARE writes and GRAB reads
+    void setSharedPatternFolder (const juce::File& folder); // for the automatic checks only (the default is the Music folder)
     int getBranchRevision() const { return branchRevision.load(); }       // goes up whenever the branches are made again (for the automatic checks)
 
     // ---- branches (read-only, for the TREE) ----
@@ -140,6 +147,8 @@ private:
     void renewBranches();                       // the branches are made again from the steps as they are now
     void savePatternBankToState();
     void loadPatternBankFromState();
+    void applyLoadedPattern (const fg::StepData& loaded, int length);       // what LOAD and GRAB do with a pattern: a manual edit
+    void refreshSharedInfo();                                // looks at the shared file (about once a second, and after SHARE / GRAB)
     enum RegenEdit { kRegenNote, kRegenGate, kRegenSlew, kRegenRatchet, kRegenOnOff, kRegenLength, kRegenResize, kRegenRotate, kRegenTranspose, kNumRegenEdits };
     bool regenOn (RegenEdit) const;             // the settings page's branch-regeneration filter: does this kind of edit make the branches again?
     void reseed (fg::ReseedKind);
@@ -214,6 +223,13 @@ private:
     std::atomic<int> pendingRotateLeft { 0 }, pendingRotateRight { 0 }, pendingTransposeUp { 0 }, pendingTransposeDown { 0 };
     std::atomic<int> pendingShrink { 0 }, pendingExpand { 0 };
     std::atomic<int> pendingPatternLoad { 0 }, pendingPatternSave { 0 };
+    std::atomic<int> pendingPatternShare { 0 }, pendingPatternGrab { 0 };
+    std::atomic<int> sharedLength { -1 };                       // LENGTH of the pattern in the shared file, -1 = no usable file
+    std::atomic<int> sharedResult { 0 };                        // 0 nothing yet, 1 shared, 2 SHARE failed, 3 grabbed, 4 GRAB: no file, 5 GRAB: file not readable
+    juce::File sharedFolder;                                    // empty = the Music folder's Fractal-Garden folder (window thread only)
+    juce::Time sharedStamp;
+    juce::int64 sharedFileSize = -1;
+    int sharedTick = 0;
     std::atomic<int> pendingUnmutate { 0 }, pendingReseedAll { 0 }, pendingReseedBranches { 0 }, pendingReseedNote { 0 }, pendingReseedGate { 0 },
                      pendingReseedSlew { 0 }, pendingReseedRatchet { 0 }, pendingReseedMod { 0 };
 

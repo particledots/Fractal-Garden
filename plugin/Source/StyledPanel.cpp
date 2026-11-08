@@ -829,15 +829,17 @@ FractalGardenStyledPanel::FractalGardenStyledPanel (FractalGardenProcessor& p, c
     addChildComponent (chanceButton);
 
     // Row 2: Pattern, Root, Transpose, Rotate, Resize, Reset, Unmutate
-    addMenu (fg::id::patternSlot, { 60, 716, 126, 30 });
-    addMomentary (fg::id::patternLoad, "LOAD", 12.5f, { 194, 716, 60, 30 });
-    addMomentary (fg::id::patternSave, "SAVE", 12.5f, { 260, 716, 60, 30 });
+    addMenu (fg::id::patternSlot, { 60, 716, 96, 30 });
+    addMomentary (fg::id::patternLoad,  "LOAD",  11.0f, { 160, 716, 46, 30 });
+    addMomentary (fg::id::patternSave,  "SAVE",  11.0f, { 210, 716, 46, 30 });
+    addMomentary (fg::id::patternShare, "SHARE", 10.5f, { 260, 716, 46, 30 });
+    addMomentary (fg::id::patternGrab,  "GRAB",  11.0f, { 310, 716, 46, 30 });
 
     rootDial.setSliderStyle (juce::Slider::RotaryVerticalDrag);
     rootDial.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     rootDial.setRotaryParameters (1.25f * kPi, 2.75f * kPi, true);
     rootDial.onValueChange = [this] { repaint(); };
-    rootDial.setBounds (350, 696, 52, 52);
+    rootDial.setBounds (384, 696, 52, 52);
     rootAttachment = std::make_unique<SliderAttachment> (state, fg::id::root, rootDial);
     addAndMakeVisible (rootDial);
     controlIds.push_back (fg::id::root);
@@ -1165,21 +1167,24 @@ void FractalGardenStyledPanel::paint (juce::Graphics& g)
 
     // Row 2
     const int y2 = 690;
-    smallCard (g, 48, y2, 286, "PATTERN  (16 slots)");
+    smallCard (g, 48, y2, 320, "PATTERN  (16 slots, SHARE / GRAB)");
     {
         const int slot = proc.getPatternSlot();
         const auto info = proc.getPatternInfo (slot);
         drawAt (g, info.used ? "SLOT " + juce::String (slot + 1) + ": " + juce::String (info.length) + " STEPS" : "SLOT " + juce::String (slot + 1) + ": EMPTY",
-                326.0f, (float) y2 + 14.0f, mono (11.0f), info.used ? amber : muted, anchorEnd);
+                360.0f, (float) y2 + 14.0f, mono (11.0f), info.used ? amber : muted, anchorEnd);
     }
-    fillCard (g, { 342.0f, (float) y2, 180.0f, 64.0f });
-    drawAt (g, "ROOT", 412.0f, (float) y2 + 20.0f, sans (12.5f, true, 0.12f), text);
-    drawAt (g, rootText(), 412.0f, (float) y2 + 42.0f, mono (15.0f), amber);
+    fillCard (g, { 376.0f, (float) y2, 146.0f, 64.0f });
+    drawAt (g, "ROOT", 446.0f, (float) y2 + 20.0f, sans (12.5f, true, 0.12f), text);
+    drawAt (g, rootText(), 446.0f, (float) y2 + 42.0f, mono (15.0f), amber);
     smallCard (g, 530, y2, 130, "TRANSPOSE");
     smallCard (g, 668, y2, 130, "ROTATE");
     smallCard (g, 806, y2, 150, "RESIZE");
     smallCard (g, 964, y2, 80, "RESET");
     smallCard (g, 1052, y2, 100, "UNMUTATE");
+
+    // The shared pattern file (SHARE / GRAB): its state, or why the last SHARE / GRAB did not work
+    drawAt (g, proc.getSharedText(), 1152.0f, 766.0f, mono (11.0f), muted, anchorEnd);
 
     // Footer
     drawAt (g, "Fractal-Garden v" + versionText + " - an original MIDI effect inspired by the feel of a fractal sequencer; not affiliated with Qu-Bit Electronix",

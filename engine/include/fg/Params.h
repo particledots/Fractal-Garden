@@ -1,5 +1,5 @@
 // The list of controls Logic can see and automate: the 46 ids of "Fractal-Garden control list (milestone 1, approved 7 Nov 2026)",
-// then the 19 settings-page controls appended in milestone 9 (65 in all). Once a build with these ids ships, an id is NEVER renamed
+// then the 19 settings-page controls appended in milestone 9, then the 2 pattern-sharing buttons appended in 1.1.0 (67 in all). Once a build with these ids ships, an id is NEVER renamed
 // or removed, a menu's choices keep their order, and new controls are only appended at the end of kParams.
 //
 // This file is the single source for the plugin: the wrapper builds its parameters from kParams, the panel and the plain-slider
@@ -18,8 +18,8 @@ namespace fg
     inline constexpr int kNumSteps     = 64;
     inline constexpr int kStepsPerPage = 8;
     inline constexpr int kNumPages     = 8;
-    inline constexpr int kNumParameters = 65;
-    inline constexpr int kNumOriginalParameters = 46;       // the control list of milestone 1; the 19 after them are the settings page
+    inline constexpr int kNumParameters = 67;
+    inline constexpr int kNumOriginalParameters = 46;       // the control list of milestone 1; the 21 after them are the settings page (19) and pattern sharing (2)
 
     // ---- the ids (these strings are what Logic stores in projects and automation) ----
     namespace id
@@ -90,6 +90,9 @@ namespace fg
         inline constexpr const char* regenResize    = "regenResize";
         inline constexpr const char* regenRotate    = "regenRotate";
         inline constexpr const char* regenTranspose = "regenTranspose";
+        // ---- appended in 1.1.0: sharing one pattern between instances ----
+        inline constexpr const char* patternShare   = "patternShare";
+        inline constexpr const char* patternGrab    = "patternGrab";
     }
 
     // ---- the menus (the ORDER of each list is frozen) ----
@@ -150,7 +153,7 @@ namespace fg
     inline constexpr int kDefaultBaseNote = 48;      // C2 in Logic's naming (60 = C3)
     inline constexpr int kMaxBaseNote = 96;
 
-    // ---- the 65 controls: the 46 of the control list, then the 19 of the settings page ----
+    // ---- the 67 controls: the 46 of the control list, the 19 of the settings page, then the 2 of pattern sharing ----
     enum class Kind { Knob, Int, Choice, Toggle, Momentary };
 
     struct ParamSpec
@@ -234,6 +237,9 @@ namespace fg
         { id::regenResize,    "Branches Follow Resize",          Kind::Toggle, 0, 1, 1, nullptr, 0 },
         { id::regenRotate,    "Branches Follow Rotate",          Kind::Toggle, 0, 1, 1, nullptr, 0 },
         { id::regenTranspose, "Branches Follow Transpose",       Kind::Toggle, 0, 1, 1, nullptr, 0 },
+        // ---- appended in 1.1.0: sharing one pattern between instances (buttons) ----
+        { id::patternShare,   "Pattern Share",           Kind::Momentary, 0, 1,  0, nullptr, 0 },
+        { id::patternGrab,    "Pattern Grab",            Kind::Momentary, 0, 1,  0, nullptr, 0 },
     };
 
     // The spec for an id, or nullptr if there is no such control.

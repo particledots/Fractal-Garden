@@ -1,5 +1,5 @@
 # The Fractal-Garden engine. Plain C++17, no JUCE, no plugin code.
-#   include/fg/Params.h   the 65 controls (46 of the control list + 19 settings): ids, ranges, defaults, menu choices: the single source for the plugin
+#   include/fg/Params.h   the 67 controls (46 of the control list + 19 settings + 2 pattern sharing): ids, ranges, defaults, menu choices: the single source for the plugin
 #   include/fg/Steps.h    the 64 steps of data and how they are saved
 #   include/fg/Pitch.h    the 28 scales and the pitch a stored note plays for Scale, Key and Root (milestone 4)
 #   include/fg/Orders.h   the 11 play orders (milestone 4)

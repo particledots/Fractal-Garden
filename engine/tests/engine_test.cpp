@@ -1,4 +1,4 @@
-// Engine self-test (milestones 2 and 4): checks the 65 controls (the 46 of the control list, then the 19 of the settings page) against the approved control list, written out here a second time
+// Engine self-test (milestones 2 and 4): checks the 67 controls (the 46 of the control list, the 19 of the settings page, then the 2 of pattern sharing) against the approved control list, written out here a second time
 // (id, kind, range, default) so a slip in Params.h is caught, then the menus, the step data and its saved form, and (milestone 4) the
 // 28 scales, the pitch a stored note plays, the 11 play orders, Rotate and Transpose, and (milestone 5) the ratchet list, the sixteen Mod
 // rates, the four Mod modes' curves, Resize and the conversion of older saved projects, and (milestones 6 and 7) Default Mutate's two
@@ -28,7 +28,7 @@ static int checks = 0, failures = 0;
 
 struct Expect { const char* id; char kind; int lo, hi, def; };      // kind: K knob, I whole number, C menu, T toggle, M momentary
 
-static const Expect kExpected[65] = {
+static const Expect kExpected[67] = {
     { "branch", 'K', 0, 1, 0 }, { "path", 'K', 0, 1, 0 }, { "mutate", 'K', 0, 1, 0 },
     { "microRatchet", 'K', 0, 1, 0 }, { "microSlew", 'K', 0, 1, 0 }, { "microMod", 'K', 0, 1, 0 },
     { "perfRatchet", 'K', 0, 1, 0 }, { "perfSlew", 'K', 0, 1, 0 }, { "perfMutate", 'K', 0, 1, 0 },
@@ -55,6 +55,8 @@ static const Expect kExpected[65] = {
     { "regenNote", 'T', 0, 1, 1 }, { "regenGate", 'T', 0, 1, 1 }, { "regenSlew", 'T', 0, 1, 1 }, { "regenRatchet", 'T', 0, 1, 1 },
     { "regenStepOnOff", 'T', 0, 1, 1 }, { "regenLength", 'T', 0, 1, 1 }, { "regenResize", 'T', 0, 1, 1 }, { "regenRotate", 'T', 0, 1, 1 },
     { "regenTranspose", 'T', 0, 1, 1 },
+    // appended in 1.1.0: sharing one pattern between instances
+    { "patternShare", 'M', 0, 1, 0 }, { "patternGrab", 'M', 0, 1, 0 },
 };
 
 static fg::Kind kindOf (char c)
@@ -65,11 +67,11 @@ static fg::Kind kindOf (char c)
 
 int main()
 {
-    // ---- the 65 controls ----
-    CHECK (fg::kNumParameters == 65 && fg::kNumOriginalParameters == 46);
+    // ---- the 67 controls ----
+    CHECK (fg::kNumParameters == 67 && fg::kNumOriginalParameters == 46);
     std::set<std::string> seen;
     int momentary = 0;
-    for (int i = 0; i < 65; ++i)
+    for (int i = 0; i < 67; ++i)
     {
         const auto& p = fg::kParams[i];
         const auto& e = kExpected[i];
@@ -91,7 +93,7 @@ int main()
             CHECK (p.choices == nullptr && p.numChoices == 0);
         if (p.kind == fg::Kind::Momentary) ++momentary;
     }
-    CHECK (momentary == 17);
+    CHECK (momentary == 19);
     CHECK (fg::findParam ("nonsense") == nullptr && fg::findParam (nullptr) == nullptr);
 
     // ---- menus (the order of every list is frozen) ----
@@ -1176,6 +1178,34 @@ int main()
             "chancePingPong", "chanceRandom", "chanceDrunk", "chanceRunMin", "chanceRunMax" };
         for (int i = 0; i < 46; ++i) CHECK (std::strcmp (fg::kParams[i].id, first46[i]) == 0);
         CHECK (std::strcmp (fg::kParams[46].id, "midiChannel") == 0 && std::strcmp (fg::kParams[64].id, "regenTranspose") == 0);
+        CHECK (std::strcmp (fg::kParams[65].id, "patternShare") == 0 && std::strcmp (fg::kParams[66].id, "patternGrab") == 0);
+
+        // the shared pattern (1.1.0): one pattern as bytes; anything it does not understand changes nothing
+        {
+            fg::StepData sp = fg::StepData::makeSample();
+            sp.steps[5].note = 33; sp.steps[5].gate = 70; sp.steps[63].slew = 40;
+            const auto bytes = fg::sharedPatternToBytes (sp, 37);
+            fg::StepData got; int glen = 8;
+            CHECK (fg::sharedPatternFromBytes (bytes.data(), bytes.size(), got, glen));
+            CHECK (got == sp && glen == 37);
+            const fg::StepData before = got; int lenBefore = glen;
+            CHECK (! fg::sharedPatternFromBytes (nullptr, 0, got, glen));
+            CHECK (! fg::sharedPatternFromBytes (bytes.data(), 7, got, glen));
+            CHECK (! fg::sharedPatternFromBytes (bytes.data(), bytes.size() - 1, got, glen));      // cut short
+            auto longer = bytes; longer.push_back (0);
+            CHECK (! fg::sharedPatternFromBytes (longer.data(), longer.size(), got, glen));        // extra byte
+            auto bad = bytes; bad[0] = 'X';
+            CHECK (! fg::sharedPatternFromBytes (bad.data(), bad.size(), got, glen));              // not our file
+            bad = bytes; bad[4] = 2;
+            CHECK (! fg::sharedPatternFromBytes (bad.data(), bad.size(), got, glen));              // another version
+            bad = bytes; bad[5] = 0;
+            CHECK (! fg::sharedPatternFromBytes (bad.data(), bad.size(), got, glen));              // LENGTH 0
+            bad = bytes; bad[5] = 65;
+            CHECK (! fg::sharedPatternFromBytes (bad.data(), bad.size(), got, glen));              // LENGTH 65
+            CHECK (got == before && glen == lenBefore);                                            // nothing changed by any of them
+            const auto clamped = fg::sharedPatternToBytes (sp, 200);
+            CHECK (fg::sharedPatternFromBytes (clamped.data(), clamped.size(), got, glen) && glen == 64);
+        }
         CHECK (fg::kDefaultSlewCc == fg::kSlewCc && fg::kDefaultModCc == fg::kModCc && fg::kDefaultBaseNote == fg::kBaseMidiNote && fg::kDefaultMidiChannel == 1);
 
         // pattern bank: slots start empty; save, load, overwrite; an empty slot loads nothing

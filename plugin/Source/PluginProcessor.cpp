@@ -7,7 +7,7 @@ namespace
     constexpr const char* kListened[] = {
         fg::id::reset, fg::id::rotateLeft, fg::id::rotateRight, fg::id::transposeDown, fg::id::transposeUp, fg::id::resizeShrink, fg::id::resizeExpand,
         fg::id::unmutate, fg::id::reseedAll, fg::id::reseedBranches, fg::id::reseedNote, fg::id::reseedGate, fg::id::reseedSlew,
-        fg::id::reseedRatchet, fg::id::reseedMod, fg::id::patternLoad, fg::id::patternSave, fg::id::length };
+        fg::id::reseedRatchet, fg::id::reseedMod, fg::id::patternLoad, fg::id::patternSave, fg::id::patternShare, fg::id::patternGrab, fg::id::length };
 }
 
 FractalGardenProcessor::FractalGardenProcessor()
@@ -127,6 +127,8 @@ void FractalGardenProcessor::parameterChanged (const juce::String& parameterId, 
     else if (parameterId == fg::id::resizeExpand)   ++pendingExpand;
     else if (parameterId == fg::id::patternLoad)    ++pendingPatternLoad;
     else if (parameterId == fg::id::patternSave)    ++pendingPatternSave;
+    else if (parameterId == fg::id::patternShare)   ++pendingPatternShare;
+    else if (parameterId == fg::id::patternGrab)    ++pendingPatternGrab;
     else if (parameterId == fg::id::unmutate)       ++pendingUnmutate;
     else if (parameterId == fg::id::reseedAll)      ++pendingReseedAll;
     else if (parameterId == fg::id::reseedBranches) ++pendingReseedBranches;
@@ -148,6 +150,8 @@ void FractalGardenProcessor::applyPendingButtons()
     for (int n = pendingExpand.exchange (0); n > 0; --n)          resizeTrunk (+1);
     for (int n = pendingPatternSave.exchange (0); n > 0; --n)     savePatternNow (getPatternSlot());
     for (int n = pendingPatternLoad.exchange (0); n > 0; --n)     loadPatternNow (getPatternSlot());
+    for (int n = pendingPatternShare.exchange (0); n > 0; --n)    sharePatternNow();
+    for (int n = pendingPatternGrab.exchange (0); n > 0; --n)     grabPatternNow();
     for (int n = pendingUnmutate.exchange (0); n > 0; --n)        unmutate();
     for (int n = pendingReseedAll.exchange (0); n > 0; --n)       reseed (fg::ReseedKind::All);
     for (int n = pendingReseedNote.exchange (0); n > 0; --n)      reseed (fg::ReseedKind::Note);
@@ -328,6 +332,11 @@ void FractalGardenProcessor::timerCallback()
 {
     drainMutations();
     applyPendingButtons();
+    if (++sharedTick >= 20)
+    {
+        sharedTick = 0;
+        refreshSharedInfo();
+    }
     if (lengthEditPending.exchange (false))
         markEdit (regenOn (kRegenLength));
 
@@ -728,6 +737,15 @@ void FractalGardenProcessor::loadPatternNow (int slot)
         const juce::ScopedLock sl (stepLock);
         if (! bank.load (slot, loaded, length))
             return;                                     // an empty slot: nothing happens
+    }
+    applyLoadedPattern (loaded, length);
+}
+
+// What LOAD and GRAB do with a pattern: a manual edit.
+void FractalGardenProcessor::applyLoadedPattern (const fg::StepData& loaded, int length)
+{
+    {
+        const juce::ScopedLock sl (stepLock);
         steps = loaded;
     }
     saveStepsToState();
@@ -736,6 +754,107 @@ void FractalGardenProcessor::loadPatternNow (int slot)
     else
         lastLengthSeen.store (length);
     markEdit (true);
+}
+
+//==============================================================================
+// Sharing one pattern between instances (1.1.0). A plug-in cannot see another instance, so SHARE and GRAB go through one small file.
+juce::File FractalGardenProcessor::getSharedPatternFile() const
+{
+    auto folder = sharedFolder;
+    if (folder == juce::File())
+        folder = juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("Fractal-Garden");
+    return folder.getChildFile ("shared-pattern.fgpattern");
+}
+
+void FractalGardenProcessor::setSharedPatternFolder (const juce::File& folder)
+{
+    sharedFolder = folder;
+    sharedStamp = juce::Time();
+    sharedFileSize = -1;
+    refreshSharedInfo();
+}
+
+// SHARE: the steps as they are now (mutations included, Performance effects never) and LENGTH go into the file. A file already there is replaced.
+void FractalGardenProcessor::sharePatternNow()
+{
+    const int length = juce::jlimit (1, fg::kNumSteps, juce::roundToInt (lengthParam->load()));
+    std::vector<std::uint8_t> bytes;
+    {
+        const juce::ScopedLock sl (stepLock);
+        bytes = fg::sharedPatternToBytes (steps, length);
+    }
+    const auto file = getSharedPatternFile();
+    const bool ok = file.getParentDirectory().createDirectory().wasOk() && file.replaceWithData (bytes.data(), bytes.size());
+    sharedResult.store (ok ? 1 : 2);
+    sharedStamp = juce::Time();
+    sharedFileSize = -1;
+    refreshSharedInfo();
+    ++patternRevision;
+}
+
+// GRAB: a manual edit, exactly like LOAD. A missing or damaged file changes nothing.
+void FractalGardenProcessor::grabPatternNow()
+{
+    const auto file = getSharedPatternFile();
+    if (! file.existsAsFile())
+    {
+        sharedResult.store (4);
+        ++patternRevision;
+        return;
+    }
+    juce::MemoryBlock block;
+    fg::StepData loaded;
+    int length = 8;
+    if (! file.loadFileAsData (block)
+        || ! fg::sharedPatternFromBytes (static_cast<const std::uint8_t*> (block.getData()), block.getSize(), loaded, length))
+    {
+        sharedResult.store (5);
+        ++patternRevision;
+        return;
+    }
+    applyLoadedPattern (loaded, length);
+    sharedResult.store (3);
+    refreshSharedInfo();
+    ++patternRevision;
+}
+
+void FractalGardenProcessor::refreshSharedInfo()
+{
+    const auto file = getSharedPatternFile();
+    int found = -1;
+    juce::Time stamp;
+    juce::int64 size = -1;
+    if (file.existsAsFile())
+    {
+        stamp = file.getLastModificationTime();
+        size = file.getSize();
+        if (stamp == sharedStamp && size == sharedFileSize)
+            return;                                     // the file has not changed since it was last read
+        juce::MemoryBlock block;
+        fg::StepData tmp;
+        int len = 8;
+        if (file.loadFileAsData (block)
+            && fg::sharedPatternFromBytes (static_cast<const std::uint8_t*> (block.getData()), block.getSize(), tmp, len))
+            found = len;
+    }
+    sharedStamp = stamp;
+    sharedFileSize = size;
+    if (sharedLength.exchange (found) != found)
+        ++patternRevision;
+}
+
+juce::String FractalGardenProcessor::getSharedText() const
+{
+    const int len = sharedLength.load();
+    switch (sharedResult.load())
+    {
+        case 2:  return "SHARE FAILED: THE FILE COULD NOT BE WRITTEN";
+        case 4:  return "GRAB: NOTHING HAS BEEN SHARED YET";
+        case 5:  return "GRAB FAILED: THE SHARED FILE IS NOT READABLE";
+        case 3:  if (len > 0) return "GRABBED THE SHARED PATTERN (" + juce::String (len) + " STEPS)"; break;
+        default: break;
+    }
+    return len > 0 ? "SHARED FILE: " + juce::String (len) + " STEPS" : juce::String ("SHARED FILE: NONE");
 }
 
 void FractalGardenProcessor::savePatternBankToState()
@@ -812,6 +931,7 @@ void FractalGardenProcessor::setStateInformation (const void* data, int sizeInBy
             pendingTransposeDown.store (0); pendingTransposeUp.store (0);
             pendingShrink.store (0); pendingExpand.store (0);
             pendingPatternLoad.store (0); pendingPatternSave.store (0);
+            pendingPatternShare.store (0); pendingPatternGrab.store (0);
             pendingUnmutate.store (0); pendingReseedAll.store (0); pendingReseedBranches.store (0); pendingReseedNote.store (0);
             pendingReseedGate.store (0); pendingReseedSlew.store (0); pendingReseedRatchet.store (0); pendingReseedMod.store (0);
 

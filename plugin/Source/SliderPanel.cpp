@@ -10,7 +10,7 @@ namespace
         return juce::Font (juce::FontOptions (height, bold ? juce::Font::bold : juce::Font::plain));
     }
 
-    constexpr int kLeft = 24, kTop = 84, kColumnWidth = 384, kRowHeight = 31, kRowsPerColumn = 22, kLabelWidth = 120, kControlHeight = 26;
+    constexpr int kLeft = 24, kTop = 84, kColumnWidth = 384, kRowHeight = 29, kRowsPerColumn = 23, kLabelWidth = 120, kControlHeight = 26;
 }
 
 FractalGardenSliderPanel::FractalGardenSliderPanel (juce::AudioProcessorValueTreeState& s) : state (s)
@@ -84,7 +84,7 @@ void FractalGardenSliderPanel::paint (juce::Graphics& g)
     g.drawText ("FRACTAL-GARDEN", kLeft, 18, 600, 44, juce::Justification::centredLeft);
     g.setColour (kMuted);
     g.setFont (font (13.0f));
-    g.drawText ("Plain sliders: one ordinary control for each of the 65 parameters.",
+    g.drawText ("Plain sliders: one ordinary control for each of the 67 parameters.",
                 kLeft, 58, 1000, 20, juce::Justification::centredLeft);
     g.drawText ("Fractal-Garden v" JucePlugin_VersionString " - an original MIDI effect inspired by the feel of a fractal sequencer; not affiliated with Qu-Bit Electronix",
                 kLeft, kHeight - 30, kWidth - 2 * kLeft, 20, juce::Justification::centredLeft);

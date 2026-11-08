@@ -3,6 +3,15 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
+Version 1.1.0 (SHARE and GRAB, the canon patch; **built, waiting for the Logic test**).
+
+- Two controls appended after the 65 (67 in all): `patternShare` and `patternGrab`, momentary buttons. The 65 ids and the order of every menu are unchanged; the defaults leave every existing behaviour as it was, so a 1.0.0 project sounds the same.
+- Engine: `sharedPatternToBytes` / `sharedPatternFromBytes` in `fg/Patterns.h` / `Patterns.cpp`: one pattern (64 steps and LENGTH) as bytes ("FGSP", version 1, LENGTH, size, step data). Anything that is not exactly that (wrong start, other version, LENGTH 0 or over 64, cut short, extra bytes) is refused and changes nothing.
+- Plugin: SHARE writes the steps as they are now (mutations included, Performance effects never) and LENGTH to `shared-pattern.fgpattern` in a `Fractal-Garden` folder in the Music folder, replacing a file already there. GRAB reads it and does what LOAD does: replaces the steps and LENGTH, is the new UNMUTATE point, makes the branches again, whatever the branch-regeneration filter says. A missing or damaged file changes nothing. Scale, Key, Root, Order, Rate, Ratio and the knobs are not part of the file. Loading a project never presses SHARE or GRAB, even if one was on when the project was saved.
+- Panel: SHARE and GRAB next to LOAD and SAVE on the PATTERN card (slot menu and buttons are a little narrower, the ROOT card too); a line at the bottom right shows the shared file's state ("SHARED FILE: n STEPS" or "NONE") or why the last SHARE or GRAB did not work. The plain-slider window now has 23 rows per column.
+- Manual gaps: see the project file "Fractal-Garden manual gaps ledger" (G-138 revised; G-139 onward).
+- Automatic checks: engine 179,996; clock 6,405,691; window and plugin test: new checks for SHARE, GRAB, a missing, damaged and unwritable file, GRAB as an edit, and loading a project with SHARE or GRAB on.
+
 Version 1.0.0 (milestones 9 and 10, release; **0.8.0 was tested in Logic on 7 November 2026 and worked; 1.0.0 changes only the version number and the documents**).
 
 - Version number 1.0.0. No change to the engine, the panel, the 65 controls or the saved state: a 0.8.0 project opens in 1.0.0 exactly as it was.

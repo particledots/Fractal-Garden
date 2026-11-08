@@ -1,6 +1,6 @@
 // Offline preview and control checks (not part of the plugin; only built with -DFG_BUILD_PREVIEW=ON).
 //   1. draws the styled panel in the states of pictures A, B and C, and the plain window, to picture files;
-//   2. checks, in BOTH windows, that all 65 ids exist, each has a control, and each control moves exactly one parameter;
+//   2. checks, in BOTH windows, that all 67 ids exist, each has a control, and each control moves exactly one parameter;
 //   3. checks saving and reloading (controls, step data, tab, page, window choice), the momentary buttons popping back,
 //      the Knob Mode titles and colours, the Order slot (REPEAT ENDS / CHANCE...), and the Chance mix pop-over;
 //   4. checks that the plugin adds no MIDI while Logic is stopped, and (milestone 3) that the sequencer follows a simulated Logic
@@ -93,11 +93,11 @@ namespace
     {
         auto& ids = editor.controlledParameterIds();
         std::set<juce::String> idSet (ids.begin(), ids.end());
-        expect ((int) ids.size() == fg::kNumParameters, which + ": exactly 65 controls (" + juce::String ((int) ids.size()) + ")");
+        expect ((int) ids.size() == fg::kNumParameters, which + ": exactly 67 controls (" + juce::String ((int) ids.size()) + ")");
         expect ((int) idSet.size() == fg::kNumParameters, which + ": no parameter has two controls");
         for (const auto& spec : fg::kParams)
             expect (idSet.count (spec.id) == 1, which + ": a control for " + spec.id);
-        expect (proc.getParameters().size() == fg::kNumParameters, "the plugin exposes 65 parameters");
+        expect (proc.getParameters().size() == fg::kNumParameters, "the plugin exposes 67 parameters");
     }
 
     void resetAll (FractalGardenProcessor& p)
@@ -140,7 +140,7 @@ int main (int argc, char** argv)
     expect (proc.getName() == "Fractal-Garden", "the plugin is called Fractal-Garden");
     expect (proc.isMidiEffect(), "it is a MIDI effect");
 
-    // ---- all 65 controls, in both windows ----
+    // ---- all 67 controls, in both windows ----
     {
         FractalGardenEditor editor (proc);
         editor.setSize (1080, 720);
@@ -1319,6 +1319,95 @@ int main (int argc, char** argv)
             press (p, fg::id::patternLoad);
             expect (p.getBranchRevision() > rev, "LOAD makes the branches again");
         }
+        // -- 1.1.0: SHARE and GRAB (one pattern, one file, shared between instances) --
+        {
+            const auto tmpDir = juce::File::getSpecialLocation (juce::File::tempDirectory);
+            const auto folder = tmpDir.getChildFile ("fg-share-test-" + juce::String::toHexString (juce::Random::getSystemRandom().nextInt64()));
+            folder.deleteRecursively();
+            FractalGardenProcessor a, b;
+            a.setPlayConfigDetails (0, 0, 48000.0, 512);
+            b.setPlayConfigDetails (0, 0, 48000.0, 512);
+            a.setSharedPatternFolder (folder);
+            b.setSharedPatternFolder (folder);
+            expect (a.getSharedText() == "SHARED FILE: NONE" && ! a.getSharedPatternFile().existsAsFile(), "no shared file at the start");
+
+            const auto b0 = b.getSteps();
+            press (b, fg::id::patternGrab);
+            expect (b.getSteps() == b0 && b.getSharedText().startsWith ("GRAB: NOTHING"), "GRAB with no shared file changes nothing and says so");
+            expect (getParam (b, fg::id::patternGrab) < 0.5f, "GRAB pops back off");
+
+            const auto a0 = a.getSteps();
+            fg::Step s = a0.steps[3]; s.note = 41; s.gate = 55; s.slew = 20; a.setStep (3, s);
+            setParam (a, fg::id::length, 12);
+            letWindowThreadRun (150);
+            const auto aSteps = a.getSteps();
+            press (a, fg::id::patternShare);
+            expect (a.getSharedPatternFile().existsAsFile() && getParam (a, fg::id::patternShare) < 0.5f, "SHARE writes the file and pops back off");
+            expect (a.getSharedText() == "SHARED FILE: 12 STEPS", "after SHARE the read-out gives the shared LENGTH");
+            expect (a.getSteps() == aSteps && lengthOf (a) == 12, "SHARE changes nothing in the instance that shares");
+            letWindowThreadRun (1200);
+            expect (b.getSharedText() == "SHARED FILE: 12 STEPS", "the other instance sees the file within a second or so");
+
+            // GRAB in instance b: steps and LENGTH come over; scale and the knobs stay as they are
+            fg::Step t = b0.steps[0]; t.note = 5; b.setStep (0, t);
+            setParam (b, fg::id::scale, 3);
+            const int branchRev = b.getBranchRevision();
+            press (b, fg::id::patternGrab);
+            expect (b.getSteps() == aSteps && lengthOf (b) == 12, "GRAB brings the shared steps and LENGTH");
+            expect (juce::roundToInt (getParam (b, fg::id::scale)) == 3, "GRAB leaves the scale as it was");
+            expect (b.getSharedText().startsWith ("GRABBED"), "GRAB says it grabbed");
+            expect (b.getBranchRevision() > branchRev, "GRAB makes the branches again");
+            letWindowThreadRun (200);
+            expect (b.getSteps() == aSteps && lengthOf (b) == 12, "GRAB's own LENGTH change is not seen as an edit");
+            press (b, fg::id::transposeUp);
+            expect (! (b.getSteps() == aSteps), "TRANSPOSE changed the grabbed pattern");
+            press (b, fg::id::unmutate);
+            expect (b.getSteps() == aSteps && lengthOf (b) == 12, "UNMUTATE goes back to the grabbed pattern (GRAB is a manual edit)");
+
+            // ROTATE after GRAB: the canon (the same pattern, offset)
+            press (b, fg::id::rotateRight);
+            expect (! (b.getSteps() == aSteps) && ! (b.getSteps() == a.getSteps()), "ROTATE offsets the grabbed pattern");
+            expect (a.getSteps() == aSteps, "the instance that shared is not touched by the other one");
+
+            // a damaged file: nothing changes, it says so
+            const auto bNow = b.getSteps();
+            a.getSharedPatternFile().replaceWithText ("this is not a pattern");
+            press (b, fg::id::patternGrab);
+            expect (b.getSteps() == bNow && b.getSharedText().startsWith ("GRAB FAILED"), "GRAB with a damaged file changes nothing and says so");
+            // sharing again repairs it
+            press (a, fg::id::patternShare);
+            press (b, fg::id::patternGrab);
+            expect (b.getSteps() == aSteps && lengthOf (b) == 12, "SHARE again replaces the damaged file; GRAB works again");
+
+            // a place that cannot be written: SHARE says so
+            const auto blocker = tmpDir.getChildFile ("fg-share-blocker-" + juce::String::toHexString (juce::Random::getSystemRandom().nextInt64()));
+            blocker.replaceWithText ("x");
+            FractalGardenProcessor c;
+            c.setPlayConfigDetails (0, 0, 48000.0, 512);
+            c.setSharedPatternFolder (blocker.getChildFile ("sub"));
+            press (c, fg::id::patternShare);
+            expect (c.getSharedText().startsWith ("SHARE FAILED"), "SHARE into a place that cannot be written says so");
+            blocker.deleteFile();
+
+            // saved with the project: a project saved with SHARE or GRAB on presses nothing when it opens
+            const auto folder2 = tmpDir.getChildFile ("fg-share-test2-" + juce::String::toHexString (juce::Random::getSystemRandom().nextInt64()));
+            setParam (a, fg::id::patternShare, 1);
+            setParam (a, fg::id::patternGrab, 1);
+            juce::MemoryBlock withBoth;
+            a.getStateInformation (withBoth);
+            FractalGardenProcessor d;
+            d.setPlayConfigDetails (0, 0, 48000.0, 512);
+            d.setSharedPatternFolder (folder2);
+            d.setStateInformation (withBoth.getData(), (int) withBoth.getSize());
+            letWindowThreadRun (450);
+            expect (! d.getSharedPatternFile().existsAsFile(), "a project saved with SHARE on does not share when it opens");
+            expect (getParam (d, fg::id::patternShare) < 0.5f && getParam (d, fg::id::patternGrab) < 0.5f, "no SHARE or GRAB button is on after loading");
+            expect (juce::roundToInt (getParam (d, fg::id::length)) == 12, "the project still loads its own LENGTH");
+            letWindowThreadRun (200);
+            folder.deleteRecursively();
+            folder2.deleteRecursively();
+        }
+
         // -- saved with the project; loading a project presses nothing --
         {
             FractalGardenProcessor p;

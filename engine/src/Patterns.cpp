@@ -108,4 +108,33 @@ bool PatternBank::fromBytes (const std::uint8_t* data, std::size_t size)
     return true;
 }
 
+//==============================================================================
+// The shared pattern
+std::vector<std::uint8_t> sharedPatternToBytes (const StepData& steps, int length)
+{
+    std::vector<std::uint8_t> out { 'F', 'G', 'S', 'P', 1 };
+    const auto stepBytes = steps.toBytes();
+    out.push_back ((std::uint8_t) std::clamp (length, 1, kNumSteps));
+    out.push_back ((std::uint8_t) (stepBytes.size() & 0xff));
+    out.push_back ((std::uint8_t) ((stepBytes.size() >> 8) & 0xff));
+    out.insert (out.end(), stepBytes.begin(), stepBytes.end());
+    return out;
+}
+
+bool sharedPatternFromBytes (const std::uint8_t* data, std::size_t size, StepData& steps, int& length)
+{
+    if (data == nullptr || size < 8 || data[0] != 'F' || data[1] != 'G' || data[2] != 'S' || data[3] != 'P' || data[4] != 1)
+        return false;
+    const int len = data[5];
+    const std::size_t n = (std::size_t) data[6] | ((std::size_t) data[7] << 8);
+    if (len < 1 || len > kNumSteps || n == 0 || 8 + n != size)
+        return false;
+    StepData loaded;
+    if (! loaded.fromBytes (data + 8, n))
+        return false;
+    steps = loaded;
+    length = len;
+    return true;
+}
+
 } // namespace fg

@@ -28,6 +28,12 @@ namespace fg
         bool operator== (const Pattern&) const;
     };
 
+    // The shared pattern (version 1.1.0): ONE pattern (the 64 steps and LENGTH) in a small block of bytes, for the file that SHARE writes and
+    // GRAB reads. Layout: "FGSP", [version = 1], length (1 to 64), size (2 bytes, little end), then the StepData saved form.
+    // sharedPatternFromBytes returns false (and changes nothing) for anything it does not understand: a missing, damaged or foreign file.
+    std::vector<std::uint8_t> sharedPatternToBytes (const StepData&, int length);
+    bool sharedPatternFromBytes (const std::uint8_t* data, std::size_t size, StepData& steps, int& length);
+
     struct PatternBank
     {
         std::array<Pattern, kNumPatternSlots> slots;
