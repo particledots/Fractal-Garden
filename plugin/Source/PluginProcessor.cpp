@@ -840,7 +840,12 @@ void FractalGardenProcessor::refreshSharedInfo()
     sharedStamp = stamp;
     sharedFileSize = size;
     if (sharedLength.exchange (found) != found)
+    {
+        const int r = sharedResult.load();
+        if ((r == 4 || r == 5) && found > 0)
+            sharedResult.store (0);                     // "nothing shared yet" / "not readable" are out of date once a good file is there
         ++patternRevision;
+    }
 }
 
 juce::String FractalGardenProcessor::getSharedText() const
