@@ -11,7 +11,7 @@ Version 1.1.0 (SHARE and GRAB, the canon patch; **built, waiting for the Logic t
 - Panel: SHARE and GRAB next to LOAD and SAVE on the PATTERN card (slot menu and buttons are a little narrower, the ROOT card too); a line at the bottom right shows the shared file's state ("SHARED FILE: n STEPS" or "NONE") or why the last SHARE or GRAB did not work. The plain-slider window now has 23 rows per column.
 - Manual gaps: see the project file "Fractal-Garden manual gaps ledger" (G-138 revised; G-139 onward).
 - Automatic checks: engine 179,996; clock 6,405,691; window and plugin test 467 (new: SHARE writes the file, the other instance sees it, GRAB brings the steps and LENGTH and leaves the scale alone, GRAB is an edit that UNMUTATE returns to, ROTATE after GRAB, a missing, damaged and unwritable file, loading a project with SHARE or GRAB on). A message about a failed GRAB goes away once a good file is there.
-- GitHub run 42488865264 (commit 67eda15, 8 November 2026): green. Engine self-test, universal build check (Apple Silicon + Intel), ad-hoc signing, auval, pluginval (AU and VST3), package and private draft release (test-build-) all passed. The window and plugin test (467 checks) was run on a Linux computer with a virtual screen and passed.
+- GitHub run 42488865264 (commit 67eda15, 8 November 2026): green. Engine self-test, universal build check (Apple Silicon + Intel), ad-hoc signing, auval, pluginval (AU and VST3), package and private draft release (test-build-21) all passed. The window and plugin test (467 checks) was run on a Linux computer with a virtual screen and passed.
 
 Version 1.0.0 (milestones 9 and 10, release; **0.8.0 was tested in Logic on 7 November 2026 and worked; 1.0.0 changes only the version number and the documents**).
 
