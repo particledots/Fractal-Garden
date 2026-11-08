@@ -8,8 +8,9 @@ namespace fg
 
 namespace
 {
-    constexpr std::uint8_t kFormatVersion = 3;       // 3: ratchet is an index, sixteen Mod rates; 2: notes are octave * 12 + degree; 1 (0.2.0, 0.3.0): MIDI notes
-    constexpr std::size_t kBytesPerStep = 8;
+    constexpr std::uint8_t kFormatVersion = 4;       // 4: fine pitch (1.2.0); 3: ratchet is an index, sixteen Mod rates; 2: notes are octave * 12 + degree; 1 (0.2.0, 0.3.0): MIDI notes
+    constexpr std::size_t kBytesPerStep = 10;        // versions 1 to 3 had 8
+    constexpr std::size_t kOldBytesPerStep = 8;
 
     std::uint8_t clampTo (int v, int lo, int hi) { return (std::uint8_t) std::min (hi, std::max (lo, v)); }
 
@@ -42,12 +43,13 @@ void Step::clamp()
     mod      = clampTo (mod, 0, kModMax);
     modShape = clampTo (modShape, 0, kNumModShapes - 1);
     modRate  = clampTo (modRate, 0, kNumModRates - 1);
+    fine     = (std::int16_t) std::min (kFineMax, std::max (-kFineMax, (int) fine));
 }
 
 bool Step::operator== (const Step& o) const
 {
     return note == o.note && gate == o.gate && slew == o.slew && ratchet == o.ratchet && mod == o.mod
-        && modShape == o.modShape && modRate == o.modRate && on == o.on;
+        && modShape == o.modShape && modRate == o.modRate && on == o.on && fine == o.fine;
 }
 
 bool StepData::operator== (const StepData& o) const
@@ -109,25 +111,29 @@ std::vector<std::uint8_t> StepData::toBytes() const
         out.push_back (s.modShape);
         out.push_back (s.modRate);
         out.push_back (s.on ? 1 : 0);
+        const std::uint16_t f = (std::uint16_t) s.fine;
+        out.push_back ((std::uint8_t) (f & 0xff));
+        out.push_back ((std::uint8_t) ((f >> 8) & 0xff));
     }
     return out;
 }
 
 bool StepData::fromBytes (const std::uint8_t* data, std::size_t size)
 {
-    if (data == nullptr || size < 2 || (data[0] != kFormatVersion && data[0] != 2 && data[0] != 1))
+    if (data == nullptr || size < 2 || (data[0] != kFormatVersion && data[0] != 3 && data[0] != 2 && data[0] != 1))
         return false;
     const int version = data[0];
     const bool oldMidiNotes = version == 1;
     const bool oldRatchetAndRates = version < 3;
+    const std::size_t bytesPerStep = version >= 4 ? kBytesPerStep : kOldBytesPerStep;
     const std::size_t count = data[1];
-    if (count == 0 || count > (std::size_t) kNumSteps || size != 2 + count * kBytesPerStep)
+    if (count == 0 || count > (std::size_t) kNumSteps || size != 2 + count * bytesPerStep)
         return false;
 
     StepData fresh;                               // steps not in the saved data keep their default values
     for (std::size_t i = 0; i < count; ++i)
     {
-        const std::uint8_t* p = data + 2 + i * kBytesPerStep;
+        const std::uint8_t* p = data + 2 + i * bytesPerStep;
         Step s;
         s.note = oldMidiNotes ? (std::uint8_t) nearestMajorStored (p[0]) : p[0];
         s.gate = p[1]; s.slew = p[2];
@@ -135,6 +141,8 @@ bool StepData::fromBytes (const std::uint8_t* data, std::size_t size)
         s.mod = p[4]; s.modShape = p[5];
         s.modRate = oldRatchetAndRates ? (std::uint8_t) modRateFromOld (p[6]) : p[6];
         s.on = p[7] != 0;
+        if (version >= 4)
+            s.fine = (std::int16_t) (std::uint16_t) ((unsigned) p[8] | ((unsigned) p[9] << 8));
         s.clamp();
         fresh.steps[i] = s;
     }

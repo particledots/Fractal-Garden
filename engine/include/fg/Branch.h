@@ -45,6 +45,9 @@ namespace fg
         std::array<std::array<Step, kNumSteps>, kMaxBranches> steps {};     // branch b (0-based) is steps[b]; the first LENGTH steps of each are used
     };
 
-    // Builds the branches of the path from the trunk snapshot `source`.
-    void buildBranches (BranchSet&, const StepData& source, int length, int scale, int branches, int path, std::uint32_t seed);
+    // Builds the branches of the path from the trunk snapshot `source`. rangeOctaves (1.2.0, see fg/Mutate.h) limits the notes the Randomize
+    // and Mutate branches make by themselves; Reverse, Inverse and Transpose work from the notes that are there, as before. A step's fine
+    // pitch goes with it (Inverse turns it round, Randomize puts it back to 0).
+    void buildBranches (BranchSet&, const StepData& source, int length, int scale, int branches, int path, std::uint32_t seed,
+                        int rangeOctaves = kNumOctaves);
 }

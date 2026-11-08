@@ -222,6 +222,8 @@ int StepEditor::scaleIndex() const { return juce::jlimit (0, fg::kNumScales - 1,
 int StepEditor::keyIndex() const   { return juce::jlimit (0, fg::kNumKeys - 1, readInt (proc.getValueTreeState(), fg::id::key)); }
 int StepEditor::rootValue() const  { return readInt (proc.getValueTreeState(), fg::id::root); }
 int StepEditor::baseNoteValue() const { return juce::jlimit (0, fg::kMaxBaseNote, readInt (proc.getValueTreeState(), fg::id::baseNote)); }
+int StepEditor::pitchSnapValue() const { return juce::jlimit (0, fg::kNumPitchSnaps - 1, readInt (proc.getValueTreeState(), fg::id::pitchSnap)); }
+int StepEditor::bendRangeValue() const { return juce::jlimit (1, fg::kMaxBendRange, readInt (proc.getValueTreeState(), fg::id::bendRange)); }
 int StepEditor::activePages() const { return juce::jlimit (1, fg::kNumPages, (length() + fg::kStepsPerPage - 1) / fg::kStepsPerPage); }
 int StepEditor::modMode() const  { return readInt (proc.getValueTreeState(), fg::id::modMode); }
 int StepEditor::tab() const      { return proc.getEditorTab(); }
@@ -242,9 +244,10 @@ void StepEditor::toggleStep (int i)
 void StepEditor::refresh()
 {
     const int rev = proc.getStepsRevision(), t = tab(), pg = page(), len = length(), mm = modMode();
-    const int sc = scaleIndex(), ky = keyIndex(), rt = rootValue();
-    if (rev != lastRevision || t != lastTab || pg != lastPage || len != lastLength || mm != lastModMode || sc != lastScale || ky != lastKey || rt != lastRoot)
+    const int sc = scaleIndex(), ky = keyIndex(), rt = rootValue(), sn = pitchSnapValue();
+    if (rev != lastRevision || t != lastTab || pg != lastPage || len != lastLength || mm != lastModMode || sc != lastScale || ky != lastKey || rt != lastRoot || sn != lastSnap)
     {
+        lastSnap = sn;
         lastRevision = rev; lastTab = t; lastPage = pg; lastLength = len; lastModMode = mm; lastScale = sc; lastKey = ky; lastRoot = rt;
         repaint();
     }
@@ -355,7 +358,19 @@ void StepEditor::paint (juce::Graphics& g)
                 char nm[16];
                 switch (tb)
                 {
-                    case 0:  fg::noteName (fg::pitchFor (st.note, scaleIndex(), keyIndex(), rootValue(), baseNoteValue()), nm, sizeof nm); readout = nm; break;
+                    case 0:
+                    {
+                        const auto pp = fg::playedPitch (st.note, st.fine, pitchSnapValue(), scaleIndex(), keyIndex(), rootValue(), baseNoteValue(), bendRangeValue());
+                        fg::noteName (pp.note, nm, sizeof nm);
+                        readout = nm;
+                        if (pitchSnapValue() == fg::kSnapFree)             // FREE: the cents left over after the nearest semitone
+                        {
+                            const int cents = (int) std::lround ((pp.bend - fg::kBendCenter) * bendRangeValue() * 100.0 / (double) fg::kBendCenter);
+                            if (cents != 0)
+                                readout << (cents > 0 ? " +" : " ") << cents << "c";
+                        }
+                        break;
+                    }
                     case 1:  readout = juce::String (st.gate) + " %"; break;
                     case 2:  readout = juce::String (st.slew) + " %"; break;
                     case 3:  readout = "x" + juce::String (fg::kRatchetAmounts[juce::jlimit (0, fg::kRatchetMax, (int) st.ratchet)]); break;
@@ -393,6 +408,16 @@ void StepEditor::paint (juce::Graphics& g)
 
 void StepEditor::dragValue (int stepIndex, int tabIndex, float mouseY)
 {
+    if (tabIndex == 0 && pitchSnapValue() == fg::kSnapFree && stepIndex >= 0 && stepIndex < fg::kNumSteps && stepIndex < length())
+    {
+        // FREE: relative drag, 10 cents per pixel (1 cent with Shift held down, see mouseDrag)
+        const int cents = dragStartCents + (int) std::lround ((dragStartY - mouseY) * dragCentsPerPixel);
+        auto s = proc.getSteps().steps[(std::size_t) stepIndex];
+        fg::setPitchCents (s.note, s.fine, cents, scaleIndex(), rootValue());
+        proc.setStep (stepIndex, s);
+        repaint();
+        return;
+    }
     setValue (stepIndex, tabIndex, 1.0f - juce::jlimit (0.0f, 1.0f, (mouseY - 198.0f - 4.0f) / (110.0f - 8.0f)));
 }
 
@@ -404,12 +429,34 @@ void StepEditor::setValue (int stepIndex, int tabIndex, float fraction)
     auto s = proc.getSteps().steps[(std::size_t) stepIndex];
     switch (tabIndex)
     {
-        case 0:  s.note = (std::uint8_t) fg::degreeToStored (roundedInt (f * (float) (fg::degreeCount (scaleIndex()) - 1)), scaleIndex()); break;
+        case 0:
+            if (pitchSnapValue() == fg::kSnapStep)
+            {
+                s.note = (std::uint8_t) fg::degreeToStored (roundedInt (f * (float) (fg::degreeCount (scaleIndex()) - 1)), scaleIndex());
+                s.fine = 0;
+            }
+            else        // SEMITONES (and a plain click in FREE): the height gives a whole semitone anywhere between the lowest and the highest scale note
+            {
+                const int lo = fg::pitchCentsOf (fg::degreeToStored (0, scaleIndex()), 0, scaleIndex(), rootValue());
+                const int hi = fg::pitchCentsOf (fg::degreeToStored (fg::degreeCount (scaleIndex()) - 1, scaleIndex()), 0, scaleIndex(), rootValue());
+                fg::setPitchCents (s.note, s.fine, lo + roundedInt (f * (float) ((hi - lo) / 100)) * 100, scaleIndex(), rootValue());
+            }
+            break;
         case 1:  s.gate = (std::uint8_t) roundedInt (f * (float) fg::kGateMax); break;
         case 2:  s.slew = (std::uint8_t) roundedInt (f * (float) fg::kSlewMax); break;
         case 3:  s.ratchet = (std::uint8_t) roundedInt (f * (float) fg::kRatchetMax); break;
         default: s.mod = (std::uint8_t) roundedInt (f * (float) fg::kModMax); break;
     }
+    proc.setStep (stepIndex, s);
+    repaint();
+}
+
+void StepEditor::nudgeNote (int stepIndex, int cents)
+{
+    if (stepIndex < 0 || stepIndex >= fg::kNumSteps || stepIndex >= length() || pitchSnapValue() == fg::kSnapStep)
+        return;
+    auto s = proc.getSteps().steps[(std::size_t) stepIndex];
+    fg::nudgePitchCents (s.note, s.fine, cents, scaleIndex(), rootValue(), pitchSnapValue() == fg::kSnapSemitones);
     proc.setStep (stepIndex, s);
     repaint();
 }
@@ -422,7 +469,7 @@ void StepEditor::resetValue (int stepIndex, int tabIndex)
     const fg::Step defaults;
     switch (tabIndex)
     {
-        case 0:  st.note = defaults.note; break;
+        case 0:  st.note = defaults.note; st.fine = 0; break;
         case 1:  st.gate = defaults.gate; break;
         case 2:  st.slew = defaults.slew; break;
         case 3:  st.ratchet = defaults.ratchet; break;
@@ -474,7 +521,16 @@ void StepEditor::mouseDown (const juce::MouseEvent& e)
             else
             {
                 dragStep = s;
-                dragValue (s, tab(), (float) p.y);
+                if (tab() == 0 && pitchSnapValue() == fg::kSnapFree)
+                {
+                    // FREE: a click does not jump; the drag moves the pitch from where it is
+                    const auto& st = proc.getSteps().steps[(std::size_t) s];
+                    dragStartY = (float) p.y;
+                    dragStartCents = fg::pitchCentsOf (st.note, st.fine, scaleIndex(), rootValue());
+                    dragCentsPerPixel = e.mods.isShiftDown() ? 1.0f : 10.0f;
+                }
+                else
+                    dragValue (s, tab(), (float) p.y);
             }
             return;
         }
@@ -484,7 +540,31 @@ void StepEditor::mouseDown (const juce::MouseEvent& e)
 void StepEditor::mouseDrag (const juce::MouseEvent& e)
 {
     if (dragStep >= 0)
+    {
+        if (tab() == 0 && pitchSnapValue() == fg::kSnapFree)
+        {
+            const float newRate = e.mods.isShiftDown() ? 1.0f : 10.0f;
+            if (newRate != dragCentsPerPixel)         // Shift pressed or let go mid-drag: carry on from here without a jump
+            {
+                const auto& st = proc.getSteps().steps[(std::size_t) dragStep];
+                dragStartY = (float) (e.getPosition().y + kY);
+                dragStartCents = fg::pitchCentsOf (st.note, st.fine, scaleIndex(), rootValue());
+                dragCentsPerPixel = newRate;
+            }
+        }
         dragValue (dragStep, tab(), (float) (e.getPosition().y + kY));
+    }
+}
+
+// The mouse wheel over a step's box on the Note tab (SEMITONES: one semitone a notch; FREE: 10 cents, 1 cent with Shift).
+void StepEditor::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    const int s = stepUnder (e.getPosition() + juce::Point<int> (kX, kY));
+    if (s < 0 || tab() != 0 || pitchSnapValue() == fg::kSnapStep)
+        return;
+    const int notches = w.deltaY > 0.0f ? 1 : (w.deltaY < 0.0f ? -1 : 0);
+    const int unit = pitchSnapValue() == fg::kSnapSemitones ? 100 : (e.mods.isShiftDown() ? 1 : 10);
+    nudgeNote (s, notches * unit);
 }
 
 int StepEditor::stepUnder (juce::Point<int> p) const
@@ -579,8 +659,8 @@ void ChanceMixPanel::paint (juce::Graphics& g)
 // SettingsPanel
 namespace
 {
-    constexpr const char* kStepperIds[4]   = { fg::id::midiChannel, fg::id::ccSlew, fg::id::ccMod, fg::id::baseNote };
-    constexpr const char* kStepperNames[4] = { "MIDI CHANNEL", "SLEW CC", "MOD CC", "BASE NOTE" };
+    constexpr const char* kStepperIds[6]   = { fg::id::midiChannel, fg::id::ccSlew, fg::id::ccMod, fg::id::baseNote, fg::id::rangeOctaves, fg::id::bendRange };
+    constexpr const char* kStepperNames[6] = { "MIDI CHANNEL", "SLEW CC", "MOD CC", "BASE NOTE", "RANGE (OCTAVES)", "BEND RANGE" };
     constexpr const char* kReseedIds[5]    = { fg::id::reseedFilterNote, fg::id::reseedFilterGate, fg::id::reseedFilterSlew,
                                                fg::id::reseedFilterRatchet, fg::id::reseedFilterMod };
     constexpr const char* kReseedNames[5]  = { "NOTE", "GATE", "SLEW", "RATCHET", "MOD" };
@@ -591,7 +671,7 @@ namespace
 
 SettingsPanel::SettingsPanel (juce::AudioProcessorValueTreeState& apvts) : state (apvts)
 {
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 6; ++i)
     {
         auto st = std::make_unique<Stepper>();
         st->name = kStepperNames[i];
@@ -604,6 +684,10 @@ SettingsPanel::SettingsPanel (juce::AudioProcessorValueTreeState& apvts) : state
         ids.push_back (kStepperIds[i]);
         steppers.push_back (std::move (st));
     }
+
+    snapChips = std::make_unique<ChipSelector> (apvts, fg::id::pitchSnap, juce::StringArray { "STEP", "SEMITONES", "FREE" }, 11.0f, 84, 100);
+    addAndMakeVisible (*snapChips);
+    ids.push_back (fg::id::pitchSnap);
 
     resizeChips = std::make_unique<ChipSelector> (apvts, fg::id::resizeMethod, juce::StringArray { "SPREAD", "STRETCH", "CLONE" }, 11.0f, 84, 90);
     addAndMakeVisible (*resizeChips);
@@ -632,6 +716,9 @@ void SettingsPanel::resized()
 {
     for (int i = 0; i < 4; ++i)
         steppers[(std::size_t) i]->slider.setBounds (24 + i * 196, 76, 168, 30);
+    steppers[4]->slider.setBounds (24, 410, 168, 30);
+    steppers[5]->slider.setBounds (24 + 196, 410, 168, 30);
+    snapChips->setBounds (24 + 392, 408, 3 * 100, 32);
     resizeChips->setBounds (24, 148, 3 * 90, 32);
     for (int i = 0; i < (int) reseedToggles.size(); ++i)
         reseedToggles[(std::size_t) i]->button.setBounds (24 + i * 88, 232, 82, 30);
@@ -653,6 +740,17 @@ void SettingsPanel::paint (juce::Graphics& g)
 
     for (int i = 0; i < 4; ++i)
         drawAt (g, steppers[(std::size_t) i]->name, (float) (24 + i * 196), 60.0f, sans (11.5f, true, 0.05f), text);
+    drawAt (g, steppers[4]->name, 24.0f, 394.0f, sans (11.5f, true, 0.05f), text);
+    drawAt (g, steppers[5]->name, 24.0f + 196.0f, 394.0f, sans (11.5f, true, 0.05f), text);
+    drawAt (g, "PITCH SNAP", 24.0f + 392.0f, 394.0f, sans (11.5f, true, 0.05f), text);
+    {
+        const int octaves = roundedInt ((float) steppers[4]->slider.getValue());
+        drawAt (g, "from the base note up (" + juce::String (octaves) + (octaves == 1 ? " octave)" : " octaves)"), 24.0f, 452.0f, mono (11.0f), muted);
+        drawAt (g, "+/- semitones; match your synth", 24.0f + 196.0f, 452.0f, mono (11.0f), muted);
+        drawAt (g, "STEP = scale notes, SEMITONES = whole notes", 24.0f + 392.0f, 452.0f, mono (11.0f), muted);
+        drawAt (g, "FREE = exact pitch (sends pitch bend)", 24.0f + 392.0f, 470.0f, mono (11.0f), muted);
+        drawAt (g, "limits Reseed and Mutate. 5 = full range", 24.0f, 470.0f, mono (11.0f), muted);
+    }
     {
         char nm[16];
         const int base = roundedInt ((float) steppers[3]->slider.getValue());

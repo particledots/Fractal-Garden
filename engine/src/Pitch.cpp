@@ -1,6 +1,7 @@
 #include <fg/Pitch.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <initializer_list>
 
@@ -114,6 +115,67 @@ int pitchFor (int stored, int scale, int key, int root, int baseNote)
     const int degree = floorMod (running, n);
     const int midi = baseNote + std::clamp (key, 0, 11) + 12 * octave + scaleInterval (scale, degree);
     return std::clamp (midi, 0, 127);
+}
+
+int semitonePosition (int runningDegree, int scale)
+{
+    const int n = scaleSize (scale);
+    return floorDiv (runningDegree, n) * 12 + scaleInterval (scale, floorMod (runningDegree, n));
+}
+
+PlayedPitch playedPitch (int stored, int fineCents, int snap, int scale, int key, int root, int baseNote, int bendRangeSemitones)
+{
+    PlayedPitch p;
+    const int scaleNote = pitchFor (stored, scale, key, root, baseNote);
+    p.note = scaleNote;
+    if (snap != kSnapSemitones && snap != kSnapFree)
+        return p;                                                    // STEP: the scale note, whatever the fine pitch is
+    const int fine = std::clamp (fineCents, -kFineMax, kFineMax);
+    if (snap == kSnapSemitones)
+    {
+        p.note = std::clamp (scaleNote + floorDiv (fine + 50, 100), 0, 127);
+        return p;
+    }
+    const int total = scaleNote * 100 + fine;                        // FREE: in cents above MIDI note 0
+    int note = floorDiv (total + 50, 100);
+    int rest = total - note * 100;                                   // -50 to +49 cents
+    if (note < 0 || note > 127)
+    {
+        note = std::clamp (note, 0, 127);
+        rest = 0;
+    }
+    p.note = note;
+    const int range = std::clamp (bendRangeSemitones, 1, kMaxBendRange);
+    p.bend = std::clamp (kBendCenter + (int) std::lround ((double) rest * 8192.0 / (double) (range * 100)), 0, 16383);
+    return p;
+}
+
+int pitchCentsOf (int stored, int fineCents, int scale, int root)
+{
+    return semitonePosition (storedToDegree (stored, scale) + root, scale) * 100 + std::clamp (fineCents, -kFineMax, kFineMax);
+}
+
+void setPitchCents (std::uint8_t& stored, std::int16_t& fine, int targetCents, int scale, int root)
+{
+    const int count = degreeCount (scale);
+    int best = 0, bestDistance = 1 << 30;
+    for (int d = 0; d < count; ++d)                                  // ascending with a strict test, so a tie goes to the lower degree
+    {
+        const int distance = std::abs (semitonePosition (d + root, scale) * 100 - targetCents);
+        if (distance < bestDistance)
+        {
+            bestDistance = distance;
+            best = d;
+        }
+    }
+    stored = (std::uint8_t) degreeToStored (best, scale);
+    fine = (std::int16_t) std::clamp (targetCents - semitonePosition (best + root, scale) * 100, -kFineMax, kFineMax);
+}
+
+void nudgePitchCents (std::uint8_t& stored, std::int16_t& fine, int deltaCents, int scale, int root, bool wholeSemitones)
+{
+    const int f = wholeSemitones ? floorDiv (fine + 50, 100) * 100 : (int) fine;
+    setPitchCents (stored, fine, pitchCentsOf (stored, f, scale, root) + deltaCents, scale, root);
 }
 
 int nearestMajorStored (int midiNote)

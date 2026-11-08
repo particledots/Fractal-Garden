@@ -65,7 +65,7 @@ int branchKindFor (int level, int path, int branches, std::uint32_t seed)
     return (base + offset) % kNumBranchKinds;                // never the same as the other variant
 }
 
-void buildBranches (BranchSet& set, const StepData& source, int length, int scale, int branches, int path, std::uint32_t seed)
+void buildBranches (BranchSet& set, const StepData& source, int length, int scale, int branches, int path, std::uint32_t seed, int rangeOctaves)
 {
     const int n = sanitiseBranches (branches);
     const int L = std::clamp (length, 1, kNumSteps);
@@ -103,6 +103,7 @@ void buildBranches (BranchSet& set, const StepData& source, int length, int scal
                 {
                     Step s = prev (i);
                     s.note = (std::uint8_t) degreeToStored (2 * pivot - storedToDegree (s.note, scale), scale);
+                    s.fine = (std::int16_t) -s.fine;
                     out[(std::size_t) i] = s;
                 }
                 break;
@@ -124,7 +125,7 @@ void buildBranches (BranchSet& set, const StepData& source, int length, int scal
                 {
                     Step s = prev (i);
                     if (rng.unit() < 0.6)
-                        mutateNote (s, scale, rng);
+                        mutateNote (s, scale, rng, rangeOctaves);
                     if (rng.unit() < 0.25)
                         mutateGate (s, rng);
                     out[(std::size_t) i] = s;
@@ -135,7 +136,8 @@ void buildBranches (BranchSet& set, const StepData& source, int length, int scal
                 for (int i = 0; i < L; ++i)
                 {
                     Step s = prev (i);
-                    s.note = (std::uint8_t) degreeToStored (rng.below (degreeCount (scale)), scale);
+                    s.note = (std::uint8_t) degreeToStored (rng.below (rangeTop (scale, rangeOctaves) + 1), scale);
+                    s.fine = 0;
                     s.on = rng.unit() >= 0.2;
                     s.gate = (std::uint8_t) kGates[rng.below (9)];
                     out[(std::size_t) i] = s;

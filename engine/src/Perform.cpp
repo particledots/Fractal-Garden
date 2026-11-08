@@ -138,7 +138,7 @@ namespace fg
     }
 
     //==========================================================================
-    PerformResult performStep (const Step& stored, long long k, std::uint32_t seed, int scale, const PerformKnobs& knobs)
+    PerformResult performStep (const Step& stored, long long k, std::uint32_t seed, int scale, const PerformKnobs& knobs, int rangeOctaves)
     {
         PerformResult r;
         r.step = stored;
@@ -167,7 +167,7 @@ namespace fg
             {
                 if (mutateRoll < perfChance (mk))
                 {
-                    if (kindRoll < 0.5) mutateNote (plain, scale, rng);
+                    if (kindRoll < 0.5) mutateNote (plain, scale, rng, rangeOctaves);
                     else                mutateGate (plain, rng);
                 }
                 fallback = plain;
@@ -176,7 +176,7 @@ namespace fg
             {
                 const double p = perfOrnamentChance (mk);
                 if (fallbackRoll < p)
-                    mutateNote (fallback, scale, rng);
+                    mutateNote (fallback, scale, rng, rangeOctaves);
                 if (ornamentRoll < p)
                 {
                     const int offered = perfOrnamentsOffered (mk);

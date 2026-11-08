@@ -70,7 +70,17 @@ double mutateGateChance (double knob)
     return std::min (1.0, (knob - 0.5) * 2.0);
 }
 
-bool mutateNote (Step& s, int scale, Rng& rng)
+int rangeTop (int scale, int rangeOctaves)
+{
+    return std::clamp (rangeOctaves, 1, kNumOctaves) * scaleSize (scale) - 1;
+}
+
+int degreeToStoredInRange (int degree, int scale, int rangeOctaves)
+{
+    return degreeToStored (std::clamp (degree, 0, rangeTop (scale, rangeOctaves)), scale);
+}
+
+bool mutateNote (Step& s, int scale, Rng& rng, int rangeOctaves)
 {
     const int degree = storedToDegree (s.note, scale);
     int amount;
@@ -82,9 +92,9 @@ bool mutateNote (Step& s, int scale, Rng& rng)
         amount = r < 0.5 ? 1 : (r < 0.8 ? 2 : 3);
     }
     const int direction = rng.unit() < 0.5 ? -1 : 1;
-    int stored = degreeToStored (degree + direction * amount, scale);
+    int stored = degreeToStoredInRange (degree + direction * amount, scale, rangeOctaves);
     if (stored == s.note)
-        stored = degreeToStored (degree - direction * amount, scale);      // stuck against an end: go the other way
+        stored = degreeToStoredInRange (degree - direction * amount, scale, rangeOctaves);      // stuck against an end: go the other way
     if (stored == s.note)
         return false;
     s.note = (std::uint8_t) stored;
@@ -107,12 +117,12 @@ bool mutateGate (Step& s, Rng& rng)
     return true;
 }
 
-bool defaultMutate (Step& s, double knob, int scale, Rng& rng)
+bool defaultMutate (Step& s, double knob, int scale, Rng& rng, int rangeOctaves)
 {
     bool changed = false;
     const double noteChance = mutateNoteChance (knob), gateChance = mutateGateChance (knob);
     if (noteChance > 0.0 && rng.unit() < noteChance)
-        changed = mutateNote (s, scale, rng) || changed;
+        changed = mutateNote (s, scale, rng, rangeOctaves) || changed;
     if (gateChance > 0.0 && rng.unit() < gateChance)
         changed = mutateGate (s, rng) || changed;
     return changed;
@@ -156,7 +166,7 @@ bool microMutate (Step& s, double ratchetChance, double slewChance, double modCh
     return changed;
 }
 
-void reseedSteps (StepData& data, int first, int count, ReseedKind kind, int scale, Rng& rng, unsigned allMask)
+void reseedSteps (StepData& data, int first, int count, ReseedKind kind, int scale, Rng& rng, unsigned allMask, int rangeOctaves)
 {
     const int lo = std::clamp (first, 0, kNumSteps);
     const int hi = std::clamp (first + count, lo, kNumSteps);
@@ -165,7 +175,10 @@ void reseedSteps (StepData& data, int first, int count, ReseedKind kind, int sca
     {
         Step& s = data.steps[(std::size_t) i];
         if ((all && (allMask & 1u)) || kind == ReseedKind::Note)
-            s.note = (std::uint8_t) degreeToStored (rng.below (degreeCount (scale)), scale);
+        {
+            s.note = (std::uint8_t) degreeToStored (rng.below (rangeTop (scale, rangeOctaves) + 1), scale);
+            s.fine = 0;
+        }
         if ((all && (allMask & 2u)) || kind == ReseedKind::Gate)
         {
             s.on = rng.unit() >= 0.2;

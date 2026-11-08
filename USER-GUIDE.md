@@ -1,6 +1,6 @@
 # Fractal-Garden: user guide
 
-For version 1.1.0. Written from the README, CHANGELOG, control list and manual-gaps ledger, nothing else.
+For version 1.2.0 (the new Range and Pitch snap parts are marked "not yet tested in Logic"). Written from the README, CHANGELOG, control list and manual-gaps ledger, nothing else.
 
 ## 1. What it is
 
@@ -28,7 +28,7 @@ Try these in this order, while it plays:
 
 The big area in the middle. Tabs along the top choose what you are editing for every step: **Note, Gate, Slew, Ratchet, Mod**. Page chips pick which eight steps you see (pages past LENGTH are greyed out), and an overview strip shows all 64.
 
-- **Note:** drag in a step's box to move the note up or down the current scale. The read-out shows the note name. Double-click puts a step back to its default.
+- **Note:** drag in a step's box to move the note up or down the current scale. The read-out shows the note name. Double-click puts a step back to its default. With **Pitch snap** on SEMITONES or FREE (Settings) the Note tab works differently: see section 6. (Not yet tested in Logic.)
 - **Gate** (how long the note sounds, 5 to 100 % of the step): at 100 % the step is **tied** to the next one, so a mono synth plays smoothly without re-hitting.
 - **Slew:** how much a synth should glide into the step. It is sent as MIDI **CC 84** (a CC is a MIDI control message). You may need to map CC 84 to your synth's glide time in Logic.
 - **Ratchet:** splits a step into x1, x2, x3, x4, x6, x8, x16 or x32 quick repeats.
@@ -65,11 +65,13 @@ Related buttons: **ROTATE** (moves the steps left or right inside LENGTH), **TRA
 
 **SETTINGS...** (top of the window; DONE closes it):
 - **MIDI channel** (1 to 16, default 1), **Slew CC** (default 84), **Mod CC** (default 1), **Base note** (default 48, which Logic calls C2).
+- **Range (octaves)** (1 to 5, default 2): how many octaves above the Base note RESEED, the random branches and Mutate may use. It stops new notes going too high. It does not change notes you set yourself or a pattern you already have; a note that is already above the range stays until something mutates it. 5 is the old full range. (Not yet tested in Logic.)
+- **Pitch snap:** STEP (default) plays the scale notes, as always. SEMITONES lets each step sit on any whole semitone, ignoring the scale. FREE also allows cents between semitones; the cents are sent as pitch bend. **Bend range** (1 to 24 semitones, default 2) must match the pitch-bend range of your instrument or the cents come out wrong. In the Note tab: SEMITONES, click or drag to a height; FREE, drag moves the pitch from where it is (10 cents a pixel, hold Shift for 1 cent); the mouse wheel moves a semitone (SEMITONES) or 10 cents (FREE, Shift 1 cent); double-click puts the step back to its default note. The bend returns to centre when Logic stops. (Not yet tested in Logic.)
 - **Resize method:** Spread (default, leaves gaps), Stretch (repeats each step), Clone (repeats the whole pattern).
 - **Reseed filter:** which of Note, Gate, Slew, Ratchet, Mod the RESEED: ALL button changes.
 - **Branch filter:** which kinds of edit make the branches rebuild. Switch one off and branches keep their old version when you make that kind of edit.
 
-With the defaults, everything behaves as in earlier versions.
+With Range 5 and Pitch snap STEP, everything behaves as in 1.1.0 (the default Range is 2, which only limits new random notes).
 
 ## 7. SHARE and GRAB (the canon patch)
 
@@ -89,7 +91,7 @@ Good to know:
 ## 8. If something sounds wrong
 
 - **Nothing plays:** Logic must be playing. The plugin makes no notes while Logic is stopped. Check the header says LOGIC PLAYING and that the instrument is on the same MIDI channel as the Settings page (default 1).
-- **Notes are all wrong or very low or high:** check SCALE, KEY, ROOT and Base note in Settings (default 48).
+- **Notes are all wrong or very low or high:** check SCALE, KEY, ROOT and Base note in Settings (default 48). Too high: lower Range. Slightly out of tune with FREE: check Bend range matches your instrument.
 - **No glide or no effect from Slew or Mod:** the plugin sends CC 84 and CC 1, but your instrument has to listen to them. Map them in the instrument (Smart Controls or MIDI learn), or change the CC numbers in Settings.
 - **The pattern keeps changing and you did not ask it to:** MUTATE, Micro Mutate or Performance knobs are above 0. Set them to 0 and press UNMUTATE to go back to your last edit.
 - **Branches do not follow my edit:** a Branch filter switch (Settings) may be off for that kind of edit, or the edit was a Mutate or Reseed, which do not rebuild branches. RESEED: BRANCHES or any step edit makes them again.

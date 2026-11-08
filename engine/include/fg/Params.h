@@ -1,5 +1,6 @@
 // The list of controls Logic can see and automate: the 46 ids of "Fractal-Garden control list (milestone 1, approved 7 Nov 2026)",
-// then the 19 settings-page controls appended in milestone 9, then the 2 pattern-sharing buttons appended in 1.1.0 (67 in all). Once a build with these ids ships, an id is NEVER renamed
+// then the 19 settings-page controls appended in milestone 9, then the 2 pattern-sharing buttons appended in 1.1.0, then the 3 appended in 1.2.0
+// (Range, Pitch Snap, Pitch Bend Range): 70 in all. Once a build with these ids ships, an id is NEVER renamed
 // or removed, a menu's choices keep their order, and new controls are only appended at the end of kParams.
 //
 // This file is the single source for the plugin: the wrapper builds its parameters from kParams, the panel and the plain-slider
@@ -18,8 +19,8 @@ namespace fg
     inline constexpr int kNumSteps     = 64;
     inline constexpr int kStepsPerPage = 8;
     inline constexpr int kNumPages     = 8;
-    inline constexpr int kNumParameters = 67;
-    inline constexpr int kNumOriginalParameters = 46;       // the control list of milestone 1; the 21 after them are the settings page (19) and pattern sharing (2)
+    inline constexpr int kNumParameters = 70;
+    inline constexpr int kNumOriginalParameters = 46;       // the control list of milestone 1; the 24 after them are the settings page (19), pattern sharing (2) and the three of 1.2.0
 
     // ---- the ids (these strings are what Logic stores in projects and automation) ----
     namespace id
@@ -93,6 +94,10 @@ namespace fg
         // ---- appended in 1.1.0: sharing one pattern between instances ----
         inline constexpr const char* patternShare   = "patternShare";
         inline constexpr const char* patternGrab    = "patternGrab";
+        // ---- appended in 1.2.0: the note range and pitch snap ----
+        inline constexpr const char* rangeOctaves   = "rangeOctaves";
+        inline constexpr const char* pitchSnap      = "pitchSnap";
+        inline constexpr const char* bendRange      = "bendRange";
     }
 
     // ---- the menus (the ORDER of each list is frozen) ----
@@ -153,7 +158,23 @@ namespace fg
     inline constexpr int kDefaultBaseNote = 48;      // C2 in Logic's naming (60 = C3)
     inline constexpr int kMaxBaseNote = 96;
 
-    // ---- the 67 controls: the 46 of the control list, the 19 of the settings page, then the 2 of pattern sharing ----
+    // Pitch Snap (1.2.0). STEP: every note is a note of the scale, as in 1.1.0 (a step's fine pitch is ignored). SEMITONES: a step can be any
+    // whole semitone (its fine pitch is rounded to whole semitones). FREE: a step can be any pitch; what is left over after the nearest
+    // whole semitone is sent as pitch bend. The order is frozen; STEP is the default.
+    inline constexpr const char* kPitchSnapNames[] = { "Step", "Semitones", "Free" };
+    inline constexpr int kNumPitchSnaps = (int) (sizeof (kPitchSnapNames) / sizeof (kPitchSnapNames[0]));
+    enum PitchSnapMode { kSnapStep = 0, kSnapSemitones = 1, kSnapFree = 2 };
+
+    // Range (1.2.0): how many octaves, counted up from the base note, the notes the plugin makes by itself (Reseed, Randomize branches,
+    // Mutate, Mutate FX) stay inside. 5 is the whole five-octave range of 1.1.0.
+    inline constexpr int kMinRangeOctaves = 1;
+    inline constexpr int kMaxRangeOctaves = 5;
+    inline constexpr int kDefaultRangeOctaves = 2;
+    // Pitch Bend Range (1.2.0): the instrument's pitch bend range in semitones (plus and minus). Logic's instruments use 2 unless told otherwise.
+    inline constexpr int kDefaultBendRange = 2;
+    inline constexpr int kMaxBendRange = 24;
+
+    // ---- the 70 controls: the 46 of the control list, the 19 of the settings page, the 2 of pattern sharing, then the 3 of 1.2.0 ----
     enum class Kind { Knob, Int, Choice, Toggle, Momentary };
 
     struct ParamSpec
@@ -240,6 +261,10 @@ namespace fg
         // ---- appended in 1.1.0: sharing one pattern between instances (buttons) ----
         { id::patternShare,   "Pattern Share",           Kind::Momentary, 0, 1,  0, nullptr, 0 },
         { id::patternGrab,    "Pattern Grab",            Kind::Momentary, 0, 1,  0, nullptr, 0 },
+        // ---- appended in 1.2.0: the note range and pitch snap (Range 5 and Step give exactly the behaviour of 1.1.0) ----
+        { id::rangeOctaves,   "Range Octaves",           Kind::Int,       kMinRangeOctaves, kMaxRangeOctaves, kDefaultRangeOctaves, nullptr, 0 },
+        { id::pitchSnap,      "Pitch Snap",              Kind::Choice,    0, kNumPitchSnaps - 1, 0, kPitchSnapNames, kNumPitchSnaps },
+        { id::bendRange,      "Pitch Bend Range",        Kind::Int,       1, kMaxBendRange, kDefaultBendRange, nullptr, 0 },
     };
 
     // The spec for an id, or nullptr if there is no such control.

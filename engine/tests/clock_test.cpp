@@ -1882,6 +1882,57 @@ int main()
         }
     }
 
+    {
+        // ---- 1.2.0: Pitch snap output ----
+        // STEP (the default): no pitch-bend event at all, and the fine value changes nothing
+        {
+            Run r = makeRun (192000);
+            for (auto& st : r.data.steps) st.fine = 70;
+            fg::TrunkPlayer p;
+            int bends = 0;
+            for (const Ev& e : simulate (p, r)) if (e.cc == fg::kBendEvent) ++bends;
+            CHECK (bends == 0);
+        }
+        // FREE: a bend event comes right before each note that needs another bend, and it is sent before the note-on
+        {
+            Run r = makeRun (192000);
+            for (std::size_t i = 0; i < r.data.steps.size(); ++i) r.data.steps[i].fine = (std::int16_t) ((i % 2) ? 25 : 0);
+            r.settings = [] (long long) { fg::PlayerSettings s = plainSettings(); s.pitchSnap = fg::kSnapFree; return s; };
+            fg::TrunkPlayer p;
+            const auto ev = simulate (p, r);
+            int bends = 0; bool order = true; int lastBend = fg::kBendCenter;
+            for (std::size_t i = 0; i < ev.size(); ++i)
+            {
+                if (ev[i].cc == fg::kBendEvent)
+                {
+                    ++bends;
+                    CHECK (ev[i].value != lastBend && ev[i].value >= 0 && ev[i].value <= 16383);
+                    lastBend = ev[i].value;
+                }
+                else if (ev[i].on && (ev[i].note - 48) % 2 != 0)
+                    order = order && lastBend > fg::kBendCenter;
+                else if (ev[i].on)
+                    order = order && lastBend == fg::kBendCenter;
+            }
+            CHECK (bends >= 8 && order);
+        }
+        // Stopping Logic puts the bend back to the centre
+        {
+            fg::TrunkPlayer p;
+            fg::StepData d = makeData();
+            for (auto& st : d.steps) st.fine = 40;
+            fg::PlayerSettings s = plainSettings(); s.pitchSnap = fg::kSnapFree;
+            std::vector<fg::NoteEvent> buf (64);
+            fg::HostBlock h; h.playing = true; h.havePpq = true; h.ppq = 0.0;
+            p.process (kSr, 512, h, s, d, buf.data(), 64);
+            fg::HostBlock stopped; stopped.playing = false;
+            const int n = p.process (kSr, 512, stopped, s, d, buf.data(), 64);
+            bool centred = false;
+            for (int i = 0; i < n; ++i) if (buf[(std::size_t) i].cc == fg::kBendEvent && buf[(std::size_t) i].value == fg::kBendCenter) centred = true;
+            CHECK (centred);
+        }
+    }
+
     std::printf ("clock tests: %d checks passed\n", checks - failures);
     if (failures > 0)
     {

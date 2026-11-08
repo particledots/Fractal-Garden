@@ -10,7 +10,7 @@ namespace
         return juce::Font (juce::FontOptions (height, bold ? juce::Font::bold : juce::Font::plain));
     }
 
-    constexpr int kLeft = 24, kTop = 84, kColumnWidth = 384, kRowHeight = 29, kRowsPerColumn = 23, kLabelWidth = 120, kControlHeight = 26;
+    constexpr int kLeft = 24, kTop = 84, kColumnWidth = 384, kRowHeight = 29, kRowsPerColumn = 24, kLabelWidth = 120, kControlHeight = 26;
 }
 
 FractalGardenSliderPanel::FractalGardenSliderPanel (juce::AudioProcessorValueTreeState& s) : state (s)

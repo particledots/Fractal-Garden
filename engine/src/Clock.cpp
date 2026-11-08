@@ -147,6 +147,18 @@ namespace fg
                 out[n++] = e;
             }
         };
+        auto emitBend = [&] (int offset, int bend)
+        {
+            if (bend != lastBend && n + 4 <= maxOut)
+            {
+                NoteEvent e;
+                e.offset = std::clamp (offset, 0, lastSample);
+                e.cc = kBendEvent;
+                e.value = bend;
+                out[n++] = e;
+                lastBend = bend;
+            }
+        };
         auto release = [&] (int offset)
         {
             if (held.load())
@@ -181,6 +193,7 @@ namespace fg
         {
             // Logic is stopped (or gave no position): the sounding note ends now and the next start begins afresh, locked to the bars.
             release (0);
+            emitBend (0, kBendCenter);                  // never leave the instrument bent
             wasRunning = false;
             anchorK = 0;
             stepActive = false;
@@ -195,6 +208,7 @@ namespace fg
         }
 
         const int length = std::clamp (settings.length, 1, kNumSteps);
+        const int rangeOct = std::clamp (settings.rangeOctaves, kMinRangeOctaves, kMaxRangeOctaves);
         const int branchCount = std::clamp (settings.branches, 0, kMaxBranches);
         if (branchCount == 0)
             branchBuilt = false;
@@ -203,12 +217,12 @@ namespace fg
             const int path = std::clamp (settings.path, 0, pathCountFor (branchCount) - 1);
             const int scale = std::clamp (settings.scale, 0, kNumScales - 1);
             if (! branchBuilt || builtRevision != settings.branchRevision || builtSeed != settings.branchSeed || builtBranches != branchCount
-                || builtPath != path || builtLength != length || builtScale != scale)
+                || builtPath != path || builtLength != length || builtScale != scale || builtRange != rangeOct)
             {
-                buildBranches (branchSet, branchSource, length, scale, branchCount, path, settings.branchSeed);
+                buildBranches (branchSet, branchSource, length, scale, branchCount, path, settings.branchSeed, rangeOct);
                 branchBuilt = true;
                 builtRevision = settings.branchRevision; builtSeed = settings.branchSeed; builtBranches = branchCount;
-                builtPath = path; builtLength = length; builtScale = scale;
+                builtPath = path; builtLength = length; builtScale = scale; builtRange = rangeOct;
             }
         }
         const PerformKnobs perf { settings.perfRatchet, settings.perfSlew, settings.perfMutate };
@@ -349,7 +363,7 @@ namespace fg
                         mutRng = Rng ((std::uint64_t) settings.seed ^ 0xa5a5a5a5ULL);
                         rngSeeded = true;
                     }
-                    bool changed = defaultMutate (stored, settings.mutate, settings.scale, mutRng);
+                    bool changed = defaultMutate (stored, settings.mutate, settings.scale, mutRng, rangeOct);
                     changed = microMutate (stored, settings.microRatchet, settings.microSlew, settings.microMod, settings.modMode, mutRng) || changed;
                     if (changed)
                     {
@@ -368,7 +382,7 @@ namespace fg
                 int ornamentDegrees[kMaxOrnamentNotes] = {};
                 if (performing && ! swallowed)
                 {
-                    const PerformResult pr = performStep (stored, k, perfSeed, perfScale, perf);
+                    const PerformResult pr = performStep (stored, k, perfSeed, perfScale, perf, rangeOct);
                     step = pr.step;
                     if (pr.ornament >= 0)
                     {
@@ -447,7 +461,11 @@ namespace fg
 
                 if (plays)
                 {
-                    const int note = pitchFor (step.note, settings.scale, settings.key, settings.root, settings.baseNote);
+                    const PlayedPitch pp = playedPitch (step.note, step.fine, settings.pitchSnap, settings.scale, settings.key, settings.root,
+                                                        settings.baseNote, settings.bendRange);
+                    const int note = pp.note;
+                    curPulseBend = ornament ? kBendCenter : pp.bend;
+                    emitBend (offset, curPulseBend);
                     int velocity = kPlayerVelocity;
                     if (settings.modMode == 1)
                         velocity = std::clamp ((int) std::lround ((double) step.mod * 127.0 / (double) kModMax), 1, 127);
@@ -506,7 +524,7 @@ namespace fg
                             locate (k + 1, nextSection, nextIndex);
                             Step next = stepRef (nextSection, nextIndex);
                             if (performing)
-                                next = performStep (next, k + 1, perfSeed, perfScale, perf).step;     // the slew the next step will really have
+                                next = performStep (next, k + 1, perfSeed, perfScale, perf, rangeOct).step;     // the slew the next step will really have
                             open = next.on && next.slew > 0;
                         }
                         gateOffPpq = open ? -1.0 : b + std::min (std::max (fraction * stepLen, minNote), stepLen);
@@ -525,6 +543,7 @@ namespace fg
                 if (n + 2 <= maxOut)
                 {
                     release (offset);
+                    emitBend (offset, curPulseBend);
                     emit (offset, true, curPulseNote, curPulseVelocity);
                     held.store (true);
                     heldNote = curPulseNote;

@@ -46,6 +46,9 @@ FractalGardenProcessor::FractalGardenProcessor()
     ccSlewParam = apvts.getRawParameterValue (fg::id::ccSlew);
     ccModParam = apvts.getRawParameterValue (fg::id::ccMod);
     baseNoteParam = apvts.getRawParameterValue (fg::id::baseNote);
+    rangeOctavesParam = apvts.getRawParameterValue (fg::id::rangeOctaves);
+    pitchSnapParam = apvts.getRawParameterValue (fg::id::pitchSnap);
+    bendRangeParam = apvts.getRawParameterValue (fg::id::bendRange);
     resizeMethodParam = apvts.getRawParameterValue (fg::id::resizeMethod);
     patternSlotParam = apvts.getRawParameterValue (fg::id::patternSlot);
     {
@@ -263,7 +266,8 @@ void FractalGardenProcessor::reseed (fg::ReseedKind kind)
         for (int i = 0; i < 5; ++i)
             if (reseedFilterParams[i]->load() > 0.5f)
                 mask |= 1u << i;
-        fg::reseedSteps (steps, first, count, kind, scale, reseedRng, mask);
+        fg::reseedSteps (steps, first, count, kind, scale, reseedRng, mask,
+                         juce::jlimit (fg::kMinRangeOctaves, fg::kMaxRangeOctaves, juce::roundToInt (rangeOctavesParam->load())));
     }
     saveStepsToState();
 }
@@ -460,10 +464,14 @@ void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     settings.slewCc = juce::jlimit (0, 127, juce::roundToInt (ccSlewParam->load()));         // the settings page
     settings.modCc = juce::jlimit (0, 127, juce::roundToInt (ccModParam->load()));
     settings.baseNote = juce::jlimit (0, fg::kMaxBaseNote, juce::roundToInt (baseNoteParam->load()));
+    settings.rangeOctaves = juce::jlimit (fg::kMinRangeOctaves, fg::kMaxRangeOctaves, juce::roundToInt (rangeOctavesParam->load()));
+    settings.pitchSnap = juce::jlimit (0, fg::kNumPitchSnaps - 1, juce::roundToInt (pitchSnapParam->load()));
+    settings.bendRange = juce::jlimit (1, fg::kMaxBendRange, juce::roundToInt (bendRangeParam->load()));
 
     // The MIDI channel (settings page). If it changed, the note that is sounding is ended on the old channel first.
     const int channel = juce::jlimit (1, 16, juce::roundToInt (midiChannelParam->load()));
     int oldChannel = 0, releasedNote = -1;
+    bool unbendOld = false;
     if (audioChannel == 0)
         audioChannel = channel;
     else if (channel != audioChannel)
@@ -471,6 +479,7 @@ void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         fg::NoteEvent released[2];
         if (player.releaseHeld (released, 2) > 0)
             releasedNote = released[0].note;
+        unbendOld = player.takeBendReset();
         oldChannel = audioChannel;
         audioChannel = channel;
     }
@@ -505,6 +514,8 @@ void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
         if (releasedNote >= 0)
             outBuffer.addEvent (juce::MidiMessage::noteOff (oldChannel, releasedNote), 0);
         outBuffer.addEvent (juce::MidiMessage::allNotesOff (oldChannel), 0);
+        if (unbendOld)
+            outBuffer.addEvent (juce::MidiMessage::pitchWheel (oldChannel, fg::kBendCenter), 0);
     }
     if (panicPending.exchange (false))
         outBuffer.addEvent (juce::MidiMessage::allNotesOff (audioChannel), 0);
@@ -512,6 +523,11 @@ void FractalGardenProcessor::processBlock (juce::AudioBuffer<float>& buffer, juc
     for (int i = 0; i < numEvents; ++i)
     {
         const auto& e = events[i];
+        if (e.cc == fg::kBendEvent)
+        {
+            outBuffer.addEvent (juce::MidiMessage::pitchWheel (audioChannel, e.value), juce::jlimit (0, lastSample, e.offset));
+            continue;
+        }
         if (e.cc >= 0)
         {
             outBuffer.addEvent (juce::MidiMessage::controllerEvent (audioChannel, e.cc, e.value), juce::jlimit (0, lastSample, e.offset));
@@ -537,6 +553,8 @@ void FractalGardenProcessor::releaseEverything (juce::MidiBuffer& out)
     const int count = player.releaseHeld (events, kMaxEvents);
     for (int i = 0; i < count; ++i)
         out.addEvent (juce::MidiMessage::noteOff (audioChannel > 0 ? audioChannel : fg::kPlayerChannel, events[i].note), 0);
+    if (player.takeBendReset())
+        out.addEvent (juce::MidiMessage::pitchWheel (audioChannel > 0 ? audioChannel : fg::kPlayerChannel, fg::kBendCenter), 0);
 }
 
 FractalGardenProcessor::HostSnapshot FractalGardenProcessor::getHostSnapshot() const

@@ -41,11 +41,17 @@ namespace fg
     double mutateNoteChance (double knob);       // 0 to 1: zone 1 rises to 100 %, zone 2 is fixed at 75 %
     double mutateGateChance (double knob);       // 0 to 1: zero in zone 1, rises to 100 % across zone 2
 
-    bool mutateNote (Step&, int scale, Rng&);    // moves the note by scale steps (true if it changed)
+    // The notes the plugin makes by itself stay inside the RANGE (1.2.0): the lowest rangeOctaves octaves of the five (the settings page's RANGE,
+    // counted up from the base note). 5 is the whole range and gives exactly the behaviour of 1.1.0. A note that is already above the range
+    // stays where it is until it mutates; then it comes back inside.
+    int rangeTop (int scale, int rangeOctaves);                       // the highest running degree number inside the range
+    int degreeToStoredInRange (int degree, int scale, int rangeOctaves);   // degreeToStored, kept inside the range
+
+    bool mutateNote (Step&, int scale, Rng&, int rangeOctaves = kNumOctaves);    // moves the note by scale steps (true if it changed)
     bool mutateGate (Step&, Rng&);               // 70 %: new gate length; 30 %: toggle on / off (true if it changed)
 
     // One step, one knob value: draws the note chance, then the gate chance. Draws nothing at knob 0. True if the step changed.
-    bool defaultMutate (Step&, double knob, int scale, Rng&);
+    bool defaultMutate (Step&, double knob, int scale, Rng&, int rangeOctaves = kNumOctaves);
 
     // ---- Micro Mutate ----
     int randomRatchet (Rng&);                    // an index into kRatchetAmounts, x1 most likely, x32 rarest
@@ -64,5 +70,6 @@ namespace fg
     //  For All, allMask says which of the five parts are included (the settings page's RESEED FILTER): bit 0 Note, 1 Gate, 2 Slew, 3 Ratchet,
     //  4 Mod. The default includes all five, which is the same as before. A part that is left out draws no random numbers.
     inline constexpr unsigned kReseedAllMask = 0x1fu;
-    void reseedSteps (StepData&, int first, int count, ReseedKind, int scale, Rng&, unsigned allMask = kReseedAllMask);
+    //  Note (1.2.0): any degree inside the RANGE, and the step's fine pitch goes back to 0.
+    void reseedSteps (StepData&, int first, int count, ReseedKind, int scale, Rng&, unsigned allMask = kReseedAllMask, int rangeOctaves = kNumOctaves);
 }

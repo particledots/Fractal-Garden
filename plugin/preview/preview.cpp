@@ -1,6 +1,6 @@
 // Offline preview and control checks (not part of the plugin; only built with -DFG_BUILD_PREVIEW=ON).
 //   1. draws the styled panel in the states of pictures A, B and C, and the plain window, to picture files;
-//   2. checks, in BOTH windows, that all 67 ids exist, each has a control, and each control moves exactly one parameter;
+//   2. checks, in BOTH windows, that all 70 ids exist, each has a control, and each control moves exactly one parameter;
 //   3. checks saving and reloading (controls, step data, tab, page, window choice), the momentary buttons popping back,
 //      the Knob Mode titles and colours, the Order slot (REPEAT ENDS / CHANCE...), and the Chance mix pop-over;
 //   4. checks that the plugin adds no MIDI while Logic is stopped, and (milestone 3) that the sequencer follows a simulated Logic
@@ -93,11 +93,11 @@ namespace
     {
         auto& ids = editor.controlledParameterIds();
         std::set<juce::String> idSet (ids.begin(), ids.end());
-        expect ((int) ids.size() == fg::kNumParameters, which + ": exactly 67 controls (" + juce::String ((int) ids.size()) + ")");
+        expect ((int) ids.size() == fg::kNumParameters, which + ": exactly 70 controls (" + juce::String ((int) ids.size()) + ")");
         expect ((int) idSet.size() == fg::kNumParameters, which + ": no parameter has two controls");
         for (const auto& spec : fg::kParams)
             expect (idSet.count (spec.id) == 1, which + ": a control for " + spec.id);
-        expect (proc.getParameters().size() == fg::kNumParameters, "the plugin exposes 67 parameters");
+        expect (proc.getParameters().size() == fg::kNumParameters, "the plugin exposes 70 parameters");
     }
 
     void resetAll (FractalGardenProcessor& p)
@@ -140,7 +140,7 @@ int main (int argc, char** argv)
     expect (proc.getName() == "Fractal-Garden", "the plugin is called Fractal-Garden");
     expect (proc.isMidiEffect(), "it is a MIDI effect");
 
-    // ---- all 67 controls, in both windows ----
+    // ---- all 70 controls, in both windows ----
     {
         FractalGardenEditor editor (proc);
         editor.setSize (1080, 720);
@@ -1658,6 +1658,83 @@ int main (int argc, char** argv)
             // UNMUTATE always does
             press (p, fg::id::unmutate);
             expect (p.getBranchRevision() > rev, "UNMUTATE always makes the branches again");
+        }
+
+        // -- 1.2.0: Range, Pitch snap and pitch bend in the playing plugin --
+        {
+            MockHost host;
+            const double sr = 48000.0, pps = 120.0 / 60.0 / sr;
+            struct Out { std::vector<int> notes, bends; bool bendBeforeNote = true; };
+            auto play = [&] (FractalGardenProcessor& p, int blocks, int firstBlock, Out& out, bool playing = true)
+            {
+                juce::AudioBuffer<float> audio (0, 512);
+                for (int b = 0; b < blocks; ++b)
+                {
+                    host.playing = playing;
+                    host.ppq = (double) ((firstBlock + b) * 512) * pps;
+                    juce::MidiBuffer midi;
+                    p.processBlock (audio, midi);
+                    for (auto meta : midi)
+                    {
+                        const auto m = meta.getMessage();
+                        if (m.isNoteOn()) out.notes.push_back (m.getNoteNumber());
+                        if (m.isPitchWheel()) out.bends.push_back (m.getPitchWheelValue());
+                    }
+                }
+            };
+            auto makeProc = [&] ()
+            {
+                auto p = std::make_unique<FractalGardenProcessor>();
+                p->setPlayConfigDetails (0, 0, sr, 512);
+                p->prepareToPlay (sr, 512);
+                p->setPlayHead (&host);
+                return p;
+            };
+            {
+                auto p = makeProc();
+                expect (juce::roundToInt (p->getValueTreeState().getRawParameterValue (fg::id::rangeOctaves)->load()) == 2, "Range starts at 2 octaves");
+                expect (juce::roundToInt (p->getValueTreeState().getRawParameterValue (fg::id::bendRange)->load()) == 2, "Bend range starts at 2 semitones");
+                expect (juce::roundToInt (p->getValueTreeState().getRawParameterValue (fg::id::pitchSnap)->load()) == 0, "Pitch snap starts at STEP");
+            }
+            // STEP: the fine pitch is ignored and no pitch bend is sent
+            Out stepOut, freeOut, semiOut;
+            {
+                auto p = makeProc();
+                for (int i = 0; i < fg::kNumSteps; ++i) { auto st = p->getSteps().steps[(std::size_t) i]; st.fine = 30; p->setStep (i, st); }
+                play (*p, 60, 0, stepOut);
+            }
+            expect (! stepOut.notes.empty() && stepOut.bends.empty(), "STEP: notes play and no pitch bend is sent");
+            {
+                auto p = makeProc();
+                setParam (*p, fg::id::pitchSnap, 2);
+                for (int i = 0; i < fg::kNumSteps; ++i) { auto st = p->getSteps().steps[(std::size_t) i]; st.fine = 30; p->setStep (i, st); }
+                play (*p, 60, 0, freeOut);
+                play (*p, 4, 60, freeOut, false);                   // Logic stops: the bend goes back to the centre
+            }
+            expect (freeOut.notes.size() == stepOut.notes.size() && ! freeOut.bends.empty(), "FREE: the same notes, with pitch bend sent");
+            expect (! freeOut.bends.empty() && freeOut.bends.front() > 8192 && freeOut.bends.back() == 8192, "FREE: +30 cents bends up, and stopping puts the bend back to the centre");
+            {
+                auto p = makeProc();
+                setParam (*p, fg::id::pitchSnap, 1);
+                for (int i = 0; i < fg::kNumSteps; ++i) { auto st = p->getSteps().steps[(std::size_t) i]; st.fine = 100; p->setStep (i, st); }
+                play (*p, 60, 0, semiOut);
+            }
+            bool up1 = semiOut.notes.size() == stepOut.notes.size() && semiOut.bends.empty();
+            for (std::size_t i = 0; up1 && i < semiOut.notes.size(); ++i) up1 = semiOut.notes[i] == stepOut.notes[i] + 1;
+            expect (up1, "SEMITONES: +100 cents plays every note one semitone higher, with no bend");
+
+            // Range limits RESEED NOTE
+            {
+                auto p = makeProc();
+                setParam (*p, fg::id::rangeOctaves, 1);
+                setParam (*p, fg::id::scale, 27);                   // Chromatic: 12 places per octave
+                setParam (*p, fg::id::reseedScope, 1);
+                for (int k = 0; k < 20; ++k) press (*p, fg::id::reseedNote);
+                bool inside = true;
+                for (int i = 0; i < fg::kNumSteps; ++i)
+                    inside = inside && fg::storedToDegree (p->getSteps().steps[(std::size_t) i].note, 27) < 12;
+                expect (inside, "Range 1: RESEED NOTE keeps every note inside one octave");
+            }
         }
 
         // -- the settings page on the panel --

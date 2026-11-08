@@ -1,4 +1,4 @@
-// Engine self-test (milestones 2 and 4): checks the 67 controls (the 46 of the control list, the 19 of the settings page, then the 2 of pattern sharing) against the approved control list, written out here a second time
+// Engine self-test (milestones 2 and 4): checks the 70 controls (the 46 of the control list, the 19 of the settings page, then the 2 of pattern sharing) against the approved control list, written out here a second time
 // (id, kind, range, default) so a slip in Params.h is caught, then the menus, the step data and its saved form, and (milestone 4) the
 // 28 scales, the pitch a stored note plays, the 11 play orders, Rotate and Transpose, and (milestone 5) the ratchet list, the sixteen Mod
 // rates, the four Mod modes' curves, Resize and the conversion of older saved projects, and (milestones 6 and 7) Default Mutate's two
@@ -28,7 +28,7 @@ static int checks = 0, failures = 0;
 
 struct Expect { const char* id; char kind; int lo, hi, def; };      // kind: K knob, I whole number, C menu, T toggle, M momentary
 
-static const Expect kExpected[67] = {
+static const Expect kExpected[70] = {
     { "branch", 'K', 0, 1, 0 }, { "path", 'K', 0, 1, 0 }, { "mutate", 'K', 0, 1, 0 },
     { "microRatchet", 'K', 0, 1, 0 }, { "microSlew", 'K', 0, 1, 0 }, { "microMod", 'K', 0, 1, 0 },
     { "perfRatchet", 'K', 0, 1, 0 }, { "perfSlew", 'K', 0, 1, 0 }, { "perfMutate", 'K', 0, 1, 0 },
@@ -57,6 +57,8 @@ static const Expect kExpected[67] = {
     { "regenTranspose", 'T', 0, 1, 1 },
     // appended in 1.1.0: sharing one pattern between instances
     { "patternShare", 'M', 0, 1, 0 }, { "patternGrab", 'M', 0, 1, 0 },
+    // appended in 1.2.0: Range, Pitch snap, Pitch bend range
+    { "rangeOctaves", 'I', 1, 5, 2 }, { "pitchSnap", 'C', 0, 2, 0 }, { "bendRange", 'I', 1, 24, 2 },
 };
 
 static fg::Kind kindOf (char c)
@@ -67,11 +69,11 @@ static fg::Kind kindOf (char c)
 
 int main()
 {
-    // ---- the 67 controls ----
-    CHECK (fg::kNumParameters == 67 && fg::kNumOriginalParameters == 46);
+    // ---- the 70 controls ----
+    CHECK (fg::kNumParameters == 70 && fg::kNumOriginalParameters == 46);
     std::set<std::string> seen;
     int momentary = 0;
-    for (int i = 0; i < 67; ++i)
+    for (int i = 0; i < 70; ++i)
     {
         const auto& p = fg::kParams[i];
         const auto& e = kExpected[i];
@@ -142,7 +144,7 @@ int main()
     CHECK (sample.steps[16].modShape == 0 && sample.steps[18].modShape == 6 && ! sample.steps[21].on);     // picture B: sine, pluck, step 22 off
 
     const auto bytes = sample.toBytes();
-    CHECK (bytes.size() == 2 + 64 * 8);
+    CHECK (bytes.size() == 2 + 64 * 10);
     fg::StepData back;                                         // starts as default steps, not the sample
     CHECK (! (back == sample));
     CHECK (back.fromBytes (bytes.data(), bytes.size()));
@@ -260,7 +262,7 @@ int main()
         CHECK (d.steps[0].note == 12 && d.steps[2].note == 13 && d.steps[4].note == 14 && d.steps[11].note == 18);
         CHECK (d.steps[0].gate == 40 && ! d.steps[0].on && d.steps[1].on);
         const auto v2 = d.toBytes();
-        CHECK (v2[0] == 3 && v2.size() == v1.size());                    // saved again in the new format
+        CHECK (v2[0] == 4 && v2.size() == 2 + 64 * 10);                    // saved again in the new format
         fg::StepData again;
         CHECK (again.fromBytes (v2.data(), v2.size()) && again == d);
     }
@@ -576,7 +578,7 @@ int main()
         d.steps[5].ratchet = 7; d.steps[5].modRate = 15; d.steps[5].gate = 5;
         const auto bytes = d.toBytes();
         fg::StepData back;
-        CHECK (bytes[0] == 3 && back.fromBytes (bytes.data(), bytes.size()) && back == d);
+        CHECK (bytes[0] == 4 && back.fromBytes (bytes.data(), bytes.size()) && back == d);
 
         std::vector<std::uint8_t> v2;
         v2.push_back (2); v2.push_back (8);
@@ -1305,6 +1307,75 @@ int main()
         CHECK (fg::pitchFor (12, 0, 0, 0) == 60 && fg::pitchFor (12, 0, 0, 0, 48) == 60);
         CHECK (fg::pitchFor (12, 0, 0, 0, 60) == 72 && fg::pitchFor (0, 0, 0, 0, 0) == 0);
         CHECK (fg::pitchFor (59, 27, 11, 24, 96) == 127);                                               // clamped into MIDI 0 to 127
+    }
+
+    {
+        // ---- 1.2.0: Range, Pitch snap, fine pitch ----
+        // Step format 4: fine pitch round trips; a version 3 file reads with fine = 0
+        fg::StepData d = fg::StepData::makeSample();
+        d.steps[3].fine = -37; d.steps[9].fine = 1200; d.steps[10].fine = 5000;      // clamped to +-1200
+        CHECK (d.steps[10].fine == 5000);
+        d.steps[10].clamp();
+        CHECK (d.steps[10].fine == fg::kFineMax);
+        const auto b4 = d.toBytes();
+        fg::StepData r4;
+        CHECK (b4[0] == 4 && r4.fromBytes (b4.data(), b4.size()) && r4 == d && r4.steps[3].fine == -37);
+
+        // Range limits Reseed Note, Mutate and Randomize
+        for (int range = 1; range <= 5; ++range)
+        {
+            for (int scale : { 0, 5, 27 })
+            {
+                const int top = fg::rangeTop (scale, range);
+                fg::StepData s;
+                fg::Rng rng (123u + (unsigned) range);
+                fg::reseedSteps (s, 0, 64, fg::ReseedKind::Note, 0, rng, fg::kReseedAllMask, range);
+                bool ok = true;
+                for (int i = 0; i < 64; ++i)
+                    ok = ok && fg::storedToDegree (s.steps[(std::size_t) i].note, scale) <= top && s.steps[(std::size_t) i].fine == 0;
+                CHECK (ok);
+                fg::Rng rm (9u);
+                bool mok = true;
+                for (int i = 0; i < 2000; ++i)
+                {
+                    fg::mutateNote (s.steps[(std::size_t) (i % 64)], scale, rm, range);
+                    mok = mok && fg::storedToDegree (s.steps[(std::size_t) (i % 64)].note, scale) <= top;
+                }
+                CHECK (mok);
+            }
+        }
+
+        // Range 5 gives the same draws as 1.1.0 (the default argument is 5)
+        {
+            fg::StepData a, b;
+            fg::Rng ra (77u), rb (77u);
+            fg::reseedSteps (a, 0, 64, fg::ReseedKind::All, 0, ra, fg::kReseedAllMask);
+            fg::reseedSteps (b, 0, 64, fg::ReseedKind::All, 0, rb, fg::kReseedAllMask, 5);
+            CHECK (a == b);
+        }
+
+        // Pitch maths
+        {
+            const int base = fg::pitchFor (7, 0, 0, 0, 48);
+            auto pp = fg::playedPitch (7, 0, fg::kSnapStep, 0, 0, 0, 48, 2);
+            CHECK (pp.note == base && pp.bend == fg::kBendCenter);
+            pp = fg::playedPitch (7, 80, fg::kSnapStep, 0, 0, 0, 48, 2);                 // STEP ignores fine
+            CHECK (pp.note == base && pp.bend == fg::kBendCenter);
+            pp = fg::playedPitch (7, 80, fg::kSnapSemitones, 0, 0, 0, 48, 2);            // 80 cents rounds up one semitone
+            CHECK (pp.note == base + 1 && pp.bend == fg::kBendCenter);
+            pp = fg::playedPitch (7, 40, fg::kSnapSemitones, 0, 0, 0, 48, 2);
+            CHECK (pp.note == base && pp.bend == fg::kBendCenter);
+            pp = fg::playedPitch (7, 50, fg::kSnapFree, 0, 0, 0, 48, 2);                 // +50 cents with a +-2 range: a quarter of the way up
+            { const double centsOut = (pp.note - base) * 100.0 + (pp.bend - fg::kBendCenter) * 200.0 / 8192.0;     // note plus bend gives +50 cents
+              CHECK (pp.bend >= 0 && pp.bend <= 16383 && std::fabs (centsOut - 50.0) < 0.1); }
+            pp = fg::playedPitch (7, 0, fg::kSnapFree, 0, 0, 0, 48, 2);
+            CHECK (pp.note == base && pp.bend == fg::kBendCenter);
+            pp = fg::playedPitch (7, 1200, fg::kSnapFree, 0, 0, 0, 48, 12);
+            CHECK (pp.note == base + 12 && pp.bend == fg::kBendCenter);
+            std::uint8_t st = 0; std::int16_t fi = 0;
+            fg::setPitchCents (st, fi, fg::pitchCentsOf (7, 0, 0, 0) + 130, 0, 0);
+            CHECK (fg::pitchCentsOf (st, fi, 0, 0) == fg::pitchCentsOf (7, 0, 0, 0) + 130);
+        }
     }
 
     std::printf ("engine tests: %d checks passed\n", checks - failures);

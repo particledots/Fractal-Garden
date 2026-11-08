@@ -52,6 +52,7 @@ namespace fg
         std::uint8_t modShape = 0;
         std::uint8_t modRate = 0;
         bool on = true;
+        std::int16_t fine = 0;           // 1.2.0: fine pitch in cents (100 = a semitone) added to the scale note; only Pitch Snap SEMITONES / FREE use it
 
         void clamp();                                  // pull every field into its range
         bool operator== (const Step&) const;
@@ -64,7 +65,8 @@ namespace fg
         // The sample pattern the editor shows (the pattern of pictures A and B for steps 1 to 24, then varied steps).
         static StepData makeSample();
 
-        // Saved form: [version][count][count x 8 bytes]. Version 3 (0.5.0) stores the ratchet as an index and uses the sixteen Mod rates;
+        // Saved form: [version][count][count x 10 bytes]. Version 4 (1.2.0) adds the fine pitch (two bytes, signed, little end first, after the
+        // on / off byte); versions 1 to 3 have 8 bytes a step and open with a fine pitch of 0. Version 3 (0.5.0) stores the ratchet as an index and uses the sixteen Mod rates;
         // version 2 (0.4.0) stored the ratchet as a count 1 to 8 and eight Mod rates, and stored notes as octave * 12 + degree; version 1
         // (0.2.0 and 0.3.0) also stored plain MIDI notes, which are converted to the nearest degree of C major when loaded. Older data is
         // converted when loaded. fromBytes returns false (and changes nothing) for anything it does not understand.

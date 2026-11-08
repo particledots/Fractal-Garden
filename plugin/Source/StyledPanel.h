@@ -102,6 +102,7 @@ public:
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
     void refresh();                                  // repaints when the steps, tab, page, length or Mod Out mode changed
     void setPlayhead (int step) { if (step != playhead) { playhead = step; repaint(); } }      // the step Logic's playback is on, -1 = none (stopped)
@@ -114,6 +115,7 @@ public:
     void toggleStep (int stepIndex);
     void setValue (int stepIndex, int tabIndex, float fraction);      // what a click or drag in the box does: 0 = bottom, 1 = top
     void resetValue (int stepIndex, int tabIndex);                    // what a double click does: the value goes back to its default
+    void nudgeNote (int stepIndex, int cents);                        // Note tab in SEMITONES / FREE: moves the pitch by this many cents (the wheel, and the automatic checks)
 
 private:
     int length() const;
@@ -122,6 +124,8 @@ private:
     int keyIndex() const;
     int rootValue() const;
     int baseNoteValue() const;
+    int pitchSnapValue() const;
+    int bendRangeValue() const;
     int activePages() const;                          // pages that LENGTH reaches
     int stepUnder (juce::Point<int> panelPoint) const;       // the step whose value box is under this point (panel coordinates), or -1
     void dragValue (int stepIndex, int tabIndex, float mouseY);
@@ -131,6 +135,9 @@ private:
     int playhead = -1;
     int lastRevision = -1, lastTab = -1, lastPage = -1, lastLength = -1, lastModMode = -1, lastScale = -1, lastKey = -1, lastRoot = -999;
     int dragStep = -1;
+    float dragStartY = 0.0f;                          // FREE: the drag is relative to where it started
+    float dragCentsPerPixel = 10.0f;
+    int dragStartCents = 0, lastSnap = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StepEditor)
 };
@@ -173,14 +180,14 @@ public:
     std::function<void()> onDone;
     const std::vector<juce::String>& controlledParameterIds() const { return ids; }
 
-    static constexpr int kWidth = 820, kHeight = 392;
+    static constexpr int kWidth = 820, kHeight = 490;
 
 private:
     struct Stepper { juce::Slider slider; std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment; juce::String name; };
     struct Toggle { juce::TextButton button; std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> attachment; };
     juce::AudioProcessorValueTreeState& state;
     std::vector<std::unique_ptr<Stepper>> steppers;       // MIDI channel, Slew CC, Mod CC, Base note
-    std::unique_ptr<ChipSelector> resizeChips;
+    std::unique_ptr<ChipSelector> resizeChips, snapChips;
     std::vector<std::unique_ptr<Toggle>> reseedToggles, regenToggles;
     std::vector<juce::String> ids;
     juce::TextButton done { "DONE" };

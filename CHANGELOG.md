@@ -3,7 +3,16 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
-Version 1.1.0 (SHARE and GRAB, the canon patch; **built, waiting for the Logic test**).
+Version 1.2.0 (Range and Pitch snap; **built, waiting for the Logic test**).
+
+- Three controls appended after the 67 (70 in all): `rangeOctaves` (id 68, 1 to 5, default 2), `pitchSnap` (id 69, STEP / SEMITONES / FREE, default STEP) and `bendRange` (id 70, 1 to 24 semitones, default 2). The 67 ids and the order of every menu are unchanged.
+- Range: counted up from the Base note. It limits RESEED NOTE and ALL, the Randomize (?) branches, Mutate, Micro Mutate never touches notes, and Mutate FX (note changes). Hand edits, existing patterns, the T and I branches and ornaments are not limited. A note already above the range stays until something mutates it, then it is pulled inside. Old projects open with Range 2, so an old pattern with high notes keeps playing them until mutated. At Range 5 the random draws are the same as in 1.1.0.
+- Pitch snap: every step gets a fine pitch in cents (saved step format 4; a project saved by 1.1.0 or earlier opens exactly as it was, fine pitch 0; pattern bank and shared pattern file carry it automatically). STEP plays the scale notes (fine pitch ignored, no pitch bend ever sent: the output is byte-for-byte that of 1.1.0 at Range 5). SEMITONES plays the nearest whole semitone (50 cents rounds up) with no bend. FREE plays the nearest semitone and sends the rest as pitch bend, scaled by Bend range. The bend goes back to the centre when Logic stops, on bypass and on a MIDI channel change.
+- Panel: SETTINGS page has Range, Bend range and Pitch snap (a new row at the bottom; the page is taller). Note tab: STEP as before; SEMITONES click or drag gives whole semitones anywhere in the range; FREE drags relative to where the note is (10 cents a pixel, Shift 1 cent), the mouse wheel moves by a semitone (SEMITONES) or 10 cents (FREE, Shift 1 cent), double-click puts the note back; the read-out shows cents in FREE. The plain-slider window has 24 rows per column.
+- Manual gaps: see the project file "Fractal-Garden manual gaps ledger" (G-07, G-08, G-67, G-74, G-82, G-104, G-136, G-147 revised; G-148 onward).
+- Automatic checks: engine and clock tests pass (new: step format 4, pitch maths, Range limits, same draws at Range 5, no bend in STEP, bend before the note in FREE, centre on stop); window and plugin test 481 (new: defaults, STEP, SEMITONES, FREE and stopping, Range 1 reseed). The window and plugin test was run on a Linux computer with a virtual screen.
+
+Version 1.1.0 (SHARE and GRAB, the canon patch; **tested in Logic on 8 November 2026: worked as described**).
 
 - Two controls appended after the 65 (67 in all): `patternShare` and `patternGrab`, momentary buttons. The 65 ids and the order of every menu are unchanged; the defaults leave every existing behaviour as it was, so a 1.0.0 project sounds the same.
 - Engine: `sharedPatternToBytes` / `sharedPatternFromBytes` in `fg/Patterns.h` / `Patterns.cpp`: one pattern (64 steps and LENGTH) as bytes ("FGSP", version 1, LENGTH, size, step data). Anything that is not exactly that (wrong start, other version, LENGTH 0 or over 64, cut short, extra bytes) is refused and changes nothing.

@@ -212,6 +212,9 @@ private:
     std::atomic<float>* ccSlewParam = nullptr;
     std::atomic<float>* ccModParam = nullptr;
     std::atomic<float>* baseNoteParam = nullptr;
+    std::atomic<float>* rangeOctavesParam = nullptr;    // 1.2.0
+    std::atomic<float>* pitchSnapParam = nullptr;
+    std::atomic<float>* bendRangeParam = nullptr;
     std::atomic<float>* resizeMethodParam = nullptr;
     std::atomic<float>* patternSlotParam = nullptr;
     std::atomic<float>* reseedFilterParams[5] = {};     // Note, Gate, Slew, Ratchet, Mod

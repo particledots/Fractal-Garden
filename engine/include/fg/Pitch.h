@@ -39,6 +39,35 @@ namespace fg
     // baseNote is the MIDI note of the lowest place at Key C, Root 0 (the settings page's BASE NOTE; the default is kBaseMidiNote).
     int pitchFor (int stored, int scale, int key, int root, int baseNote = kBaseMidiNote);
 
+    // ---- Pitch Snap (1.2.0): a step also has a FINE PITCH, in cents (100 = one semitone), added to its scale note ----
+    inline constexpr int kFineMax = 1200;                 // a step's fine pitch is kept between -1200 and +1200 cents
+    inline constexpr int kBendCenter = 8192;              // the middle of MIDI pitch bend (0 to 16383): no bend
+
+    // Semitones above the key note of a running degree number (one that may be negative or past the five octaves, as Root makes it).
+    int semitonePosition (int runningDegree, int scale);
+
+    struct PlayedPitch
+    {
+        int note = 60;                                    // the MIDI note to send (0 to 127)
+        int bend = kBendCenter;                           // the pitch bend to send before it (0 to 16383); kBendCenter unless Pitch Snap is FREE
+    };
+
+    // What really plays for a stored note and its fine pitch. snap is a PitchSnapMode (fg/Params.h):
+    //   STEP:      pitchFor (...), the fine pitch is ignored, no bend.
+    //   SEMITONES: pitchFor (...) moved by the fine pitch rounded to whole semitones (50 cents rounds up), no bend.
+    //   FREE:      the scale note plus the fine pitch, to the nearest whole semitone; what is left (-50 to +49 cents) goes into the bend, for an
+    //              instrument whose bend range is bendRangeSemitones (plus and minus).
+    PlayedPitch playedPitch (int stored, int fineCents, int snap, int scale, int key, int root, int baseNote, int bendRangeSemitones);
+
+    // Editing a note in SEMITONES or FREE (the window thread). The step's pitch, as it plays above the key note, is
+    // semitonePosition (degree + root) * 100 + fine. These put it at a new value and give back the stored place (the nearest degree of the
+    // scale, a tie going to the lower one) and the fine pitch that makes up the difference.
+    void setPitchCents (std::uint8_t& stored, std::int16_t& fine, int targetCents, int scale, int root);
+    // Moves it by deltaCents. With wholeSemitones the fine pitch is first rounded to whole semitones (SEMITONES mode).
+    void nudgePitchCents (std::uint8_t& stored, std::int16_t& fine, int deltaCents, int scale, int root, bool wholeSemitones);
+    // The pitch of a step in cents above the key note (see above).
+    int pitchCentsOf (int stored, int fineCents, int scale, int root);
+
     // For converting notes saved by versions 0.2.0 / 0.3.0 (which stored plain MIDI notes): the stored place of the nearest degree of C major.
     int nearestMajorStored (int midiNote);
 }

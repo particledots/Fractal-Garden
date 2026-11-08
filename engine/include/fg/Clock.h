@@ -111,6 +111,11 @@ namespace fg
         int slewCc = kSlewCc;            // MIDI CC number of the slew amount (0 to 127)
         int modCc = kModCc;              // MIDI CC number of the Mod output (0 to 127)
         int baseNote = kBaseMidiNote;    // MIDI note of the lowest place at Key C, Root 0
+
+        // 1.2.0. The defaults give exactly the output of 1.1.0.
+        int rangeOctaves = kNumOctaves;  // 1 to 5: how many octaves above the Base note Reseed, Randomize and Mutate may use
+        int pitchSnap = kSnapStep;       // kSnapStep, kSnapSemitones or kSnapFree (see fg/Pitch.h)
+        int bendRange = kDefaultBendRange;   // semitones the receiving instrument bends for a full pitch-bend (1 to 24)
     };
 
     // A change the player made to a trunk step (Mutate or Micro Mutate): the wrapper writes it into the saved steps.
@@ -122,7 +127,9 @@ namespace fg
     };
     inline constexpr int kMaxMutationLog = 512;
 
-    // One thing to send. A note event (cc < 0) starts or stops a note; a CC event (cc >= 0) sends controller number cc with value 0 to 127.
+    // One thing to send. A note event (cc == -1) starts or stops a note; a CC event (cc >= 0) sends controller number cc with value 0 to 127;
+    // a pitch-bend event (cc == kBendEvent) sends a pitch wheel value 0 to 16383 (8192 = centre) in value.
+    inline constexpr int kBendEvent = -2;
     struct NoteEvent
     {
         int offset = 0;              // sample position inside the block, 0 to numSamples - 1
@@ -168,6 +175,10 @@ namespace fg
         // The note-off for a note that is sounding, if any (used when the plugin is bypassed). Returns 0 or 1.
         int releaseHeld (NoteEvent* out, int maxOut);
 
+        // True (once) if a pitch-bend other than the centre is still on the instrument: the wrapper then sends the centre itself
+        // (bypass, or a change of MIDI channel).
+        bool takeBendReset()   { const bool bent = lastBend != kBendCenter; lastBend = kBendCenter; curPulseBend = kBendCenter; return bent; }
+
         // ---- what the window shows (safe to read from any thread) ----
         int currentStep() const        { return shownStep.load (std::memory_order_relaxed); }       // 0 to 63, or -1 when not running
         int currentSection() const     { return shownSection.load (std::memory_order_relaxed); }    // 0 = trunk, 1 to 7 = branch, -1 when not running
@@ -204,6 +215,8 @@ namespace fg
         int ornVelocity = 100;
 
         // CC output
+        int lastBend = 8192;                 // the pitch-bend last sent (centre until a Free step needs another)
+        int curPulseBend = 8192;
         int lastCc1 = -1, lastCc84 = -1;     // the last values sent (-1: send the next one whatever it is)
         int seenSlewCc = kSlewCc, seenModCc = kModCc;   // the CC numbers of the last block (a change makes the next values go out whatever they are)
         long long sampleClock = 0;           // samples handled so far (this is what the 10 ms grid and the 100 per second cap count in)
@@ -215,7 +228,7 @@ namespace fg
         BranchSet branchSet;
         bool branchBuilt = false;
         std::uint32_t builtRevision = 0, builtSeed = 0;
-        int builtBranches = 0, builtPath = 0, builtLength = 0, builtScale = 0;
+        int builtBranches = 0, builtPath = 0, builtLength = 0, builtScale = 0, builtRange = 0;
         Rng mutRng;
         bool rngSeeded = false;
         MutationEvent mutLog[kMaxMutationLog];

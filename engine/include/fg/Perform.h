@@ -82,5 +82,6 @@ namespace fg
 
     // The effects for the step `stored`, which plays at step counter value k. Draws nothing and returns the step unchanged when the knobs
     // are all 0.
-    PerformResult performStep (const Step& stored, long long k, std::uint32_t seed, int scale, const PerformKnobs&);
+    // rangeOctaves (1.2.0, see fg/Mutate.h) limits the temporary note changes Mutate FX makes; ornaments grow from the note that is there, as before.
+    PerformResult performStep (const Step& stored, long long k, std::uint32_t seed, int scale, const PerformKnobs&, int rangeOctaves = kNumOctaves);
 }
