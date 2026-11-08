@@ -3,7 +3,7 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
-Version 1.2.0 (Range and Pitch snap; **built, waiting for the Logic test**).
+Version 1.2.0 (Range and Pitch snap; **tested in Logic on 8 November 2026: Bryn reported "truly incredible and incredibly musical"; both Range and Pitch snap work**).
 
 - Three controls appended after the 67 (70 in all): `rangeOctaves` (id 68, 1 to 5, default 2), `pitchSnap` (id 69, STEP / SEMITONES / FREE, default STEP) and `bendRange` (id 70, 1 to 24 semitones, default 2). The 67 ids and the order of every menu are unchanged.
 - Range: counted up from the Base note. It limits RESEED NOTE and ALL, the Randomize (?) branches, Mutate, Micro Mutate never touches notes, and Mutate FX (note changes). Hand edits, existing patterns, the T and I branches and ornaments are not limited. A note already above the range stays until something mutates it, then it is pulled inside. Old projects open with Range 2, so an old pattern with high notes keeps playing them until mutated. At Range 5 the random draws are the same as in 1.1.0.

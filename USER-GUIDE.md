@@ -1,6 +1,6 @@
 # Fractal-Garden: user guide
 
-For version 1.2.0 (the new Range and Pitch snap parts are marked "not yet tested in Logic"). Written from the README, CHANGELOG, control list and manual-gaps ledger, nothing else.
+For version 1.2.0. Written from the README, CHANGELOG, control list and manual-gaps ledger, nothing else.
 
 ## 1. What it is
 
@@ -8,7 +8,7 @@ Fractal-Garden is a **MIDI effect** for Logic Pro: it sits in a track's MIDI FX 
 
 Words used below: a **step** is one slot in the pattern (note, length, and so on). The **trunk** is your own pattern. An **instance** is one copy of the plugin on one track. One instance plays one channel of 64 steps; for three voices, use three instances on three tracks.
 
-**How tested:** Bryn tested 1.1.0 in Logic on 8 November 2026 and reported that everything worked as described. Earlier versions were tested item by item on 7 November 2026. The VST3 version is built every time but is only checked occasionally (in Reaper), not in Logic.
+**How tested:** Bryn tested 1.1.0 and 1.2.0 in Logic on 8 November 2026 and reported that everything worked as described (1.2.0: "truly incredible and incredibly musical"). Earlier versions were tested item by item on 7 November 2026. The VST3 version is built every time but is only checked occasionally (in Reaper), not in Logic.
 
 ## 2. What to touch first
 
@@ -28,7 +28,7 @@ Try these in this order, while it plays:
 
 The big area in the middle. Tabs along the top choose what you are editing for every step: **Note, Gate, Slew, Ratchet, Mod**. Page chips pick which eight steps you see (pages past LENGTH are greyed out), and an overview strip shows all 64.
 
-- **Note:** drag in a step's box to move the note up or down the current scale. The read-out shows the note name. Double-click puts a step back to its default. With **Pitch snap** on SEMITONES or FREE (Settings) the Note tab works differently: see section 6. (Not yet tested in Logic.)
+- **Note:** drag in a step's box to move the note up or down the current scale. The read-out shows the note name. Double-click puts a step back to its default. With **Pitch snap** on SEMITONES or FREE (Settings) the Note tab works differently: see section 6.
 - **Gate** (how long the note sounds, 5 to 100 % of the step): at 100 % the step is **tied** to the next one, so a mono synth plays smoothly without re-hitting.
 - **Slew:** how much a synth should glide into the step. It is sent as MIDI **CC 84** (a CC is a MIDI control message). You may need to map CC 84 to your synth's glide time in Logic.
 - **Ratchet:** splits a step into x1, x2, x3, x4, x6, x8, x16 or x32 quick repeats.
@@ -65,8 +65,8 @@ Related buttons: **ROTATE** (moves the steps left or right inside LENGTH), **TRA
 
 **SETTINGS...** (top of the window; DONE closes it):
 - **MIDI channel** (1 to 16, default 1), **Slew CC** (default 84), **Mod CC** (default 1), **Base note** (default 48, which Logic calls C2).
-- **Range (octaves)** (1 to 5, default 2): how many octaves above the Base note RESEED, the random branches and Mutate may use. It stops new notes going too high. It does not change notes you set yourself or a pattern you already have; a note that is already above the range stays until something mutates it. 5 is the old full range. (Not yet tested in Logic.)
-- **Pitch snap:** STEP (default) plays the scale notes, as always. SEMITONES lets each step sit on any whole semitone, ignoring the scale. FREE also allows cents between semitones; the cents are sent as pitch bend. **Bend range** (1 to 24 semitones, default 2) must match the pitch-bend range of your instrument or the cents come out wrong. In the Note tab: SEMITONES, click or drag to a height; FREE, drag moves the pitch from where it is (10 cents a pixel, hold Shift for 1 cent); the mouse wheel moves a semitone (SEMITONES) or 10 cents (FREE, Shift 1 cent); double-click puts the step back to its default note. The bend returns to centre when Logic stops. (Not yet tested in Logic.)
+- **Range (octaves)** (1 to 5, default 2): how many octaves above the Base note RESEED, the random branches and Mutate may use. It stops new notes going too high. It does not change notes you set yourself or a pattern you already have; a note that is already above the range stays until something mutates it. 5 is the old full range.
+- **Pitch snap:** STEP (default) plays the scale notes, as always. SEMITONES lets each step sit on any whole semitone, ignoring the scale. FREE also allows cents between semitones; the cents are sent as pitch bend. **Bend range** (1 to 24 semitones, default 2) must match the pitch-bend range of your instrument or the cents come out wrong. In the Note tab: SEMITONES, click or drag to a height; FREE, drag moves the pitch from where it is (10 cents a pixel, hold Shift for 1 cent); the mouse wheel moves a semitone (SEMITONES) or 10 cents (FREE, Shift 1 cent); double-click puts the step back to its default note. The bend returns to centre when Logic stops.
 - **Resize method:** Spread (default, leaves gaps), Stretch (repeats each step), Clone (repeats the whole pattern).
 - **Reseed filter:** which of Note, Gate, Slew, Ratchet, Mod the RESEED: ALL button changes.
 - **Branch filter:** which kinds of edit make the branches rebuild. Switch one off and branches keep their old version when you make that kind of edit.
