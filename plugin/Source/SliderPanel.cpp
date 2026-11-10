@@ -84,7 +84,7 @@ void FractalGardenSliderPanel::paint (juce::Graphics& g)
     g.drawText ("FRACTAL-GARDEN", kLeft, 18, 600, 44, juce::Justification::centredLeft);
     g.setColour (kMuted);
     g.setFont (font (13.0f));
-    g.drawText ("Plain sliders: one ordinary control for each of the 67 parameters.",
+    g.drawText ("Plain sliders: one ordinary control for each of the 72 parameters.",
                 kLeft, 58, 1000, 20, juce::Justification::centredLeft);
     g.drawText ("Fractal-Garden v" JucePlugin_VersionString " - an original MIDI effect inspired by the feel of a fractal sequencer; not affiliated with Qu-Bit Electronix",
                 kLeft, kHeight - 30, kWidth - 2 * kLeft, 20, juce::Justification::centredLeft);

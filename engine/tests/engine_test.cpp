@@ -1,4 +1,4 @@
-// Engine self-test (milestones 2 and 4): checks the 70 controls (the 46 of the control list, the 19 of the settings page, then the 2 of pattern sharing) against the approved control list, written out here a second time
+// Engine self-test (milestones 2 and 4): checks the 72 controls (the 46 of the control list, the 19 of the settings page, the 2 of pattern sharing, the 3 of 1.2.0, then the 2 of 1.3.0) against the approved control list, written out here a second time
 // (id, kind, range, default) so a slip in Params.h is caught, then the menus, the step data and its saved form, and (milestone 4) the
 // 28 scales, the pitch a stored note plays, the 11 play orders, Rotate and Transpose, and (milestone 5) the ratchet list, the sixteen Mod
 // rates, the four Mod modes' curves, Resize and the conversion of older saved projects, and (milestones 6 and 7) Default Mutate's two
@@ -28,7 +28,7 @@ static int checks = 0, failures = 0;
 
 struct Expect { const char* id; char kind; int lo, hi, def; };      // kind: K knob, I whole number, C menu, T toggle, M momentary
 
-static const Expect kExpected[70] = {
+static const Expect kExpected[72] = {
     { "branch", 'K', 0, 1, 0 }, { "path", 'K', 0, 1, 0 }, { "mutate", 'K', 0, 1, 0 },
     { "microRatchet", 'K', 0, 1, 0 }, { "microSlew", 'K', 0, 1, 0 }, { "microMod", 'K', 0, 1, 0 },
     { "perfRatchet", 'K', 0, 1, 0 }, { "perfSlew", 'K', 0, 1, 0 }, { "perfMutate", 'K', 0, 1, 0 },
@@ -59,6 +59,8 @@ static const Expect kExpected[70] = {
     { "patternShare", 'M', 0, 1, 0 }, { "patternGrab", 'M', 0, 1, 0 },
     // appended in 1.2.0: Range, Pitch snap, Pitch bend range
     { "rangeOctaves", 'I', 1, 5, 2 }, { "pitchSnap", 'C', 0, 2, 0 }, { "bendRange", 'I', 1, 24, 2 },
+    // appended in 1.3.0: All Gates 100 %, Clear Ratchets
+    { "gatesFull", 'M', 0, 1, 0 }, { "ratchetsClear", 'M', 0, 1, 0 },
 };
 
 static fg::Kind kindOf (char c)
@@ -69,11 +71,11 @@ static fg::Kind kindOf (char c)
 
 int main()
 {
-    // ---- the 70 controls ----
-    CHECK (fg::kNumParameters == 70 && fg::kNumOriginalParameters == 46);
+    // ---- the 72 controls ----
+    CHECK (fg::kNumParameters == 72 && fg::kNumOriginalParameters == 46);
     std::set<std::string> seen;
     int momentary = 0;
-    for (int i = 0; i < 70; ++i)
+    for (int i = 0; i < 72; ++i)
     {
         const auto& p = fg::kParams[i];
         const auto& e = kExpected[i];
@@ -95,7 +97,7 @@ int main()
             CHECK (p.choices == nullptr && p.numChoices == 0);
         if (p.kind == fg::Kind::Momentary) ++momentary;
     }
-    CHECK (momentary == 19);
+    CHECK (momentary == 21);
     CHECK (fg::findParam ("nonsense") == nullptr && fg::findParam (nullptr) == nullptr);
 
     // ---- menus (the order of every list is frozen) ----
@@ -129,6 +131,54 @@ int main()
     fg::noteName (48, buf, sizeof buf); CHECK (std::strcmp (buf, "C2") == 0);
     fg::noteName (91, buf, sizeof buf); CHECK (std::strcmp (buf, "G5") == 0);
     fg::noteName (61, buf, sizeof buf); CHECK (std::strcmp (buf, "C#3") == 0);
+
+    // ---- 1.3.0: the default pattern and the two one-click buttons ----
+    {
+        const fg::StepData def = fg::StepData::makeDefault();
+        for (const auto& s : def.steps)
+            CHECK (s.on && s.note == 12 && s.gate == 100 && s.ratchet == 0 && s.slew == 0 && s.mod == 0 && s.modShape == 0 && s.modRate == 0 && s.fine == 0);
+        CHECK (fg::pitchFor (def.steps[0].note, 0, 0, 0) == 60);                       // C3 in Logic's naming at the default settings
+        CHECK (! (def == fg::StepData::makeSample()));
+        const auto bytes = def.toBytes();
+        fg::StepData back;
+        CHECK (back.fromBytes (bytes.data(), bytes.size()) && back == def);
+
+        // ALL GATES 100 %: only the gate length, only the span asked for
+        const fg::StepData base = fg::StepData::makeSample();
+        fg::StepData g = base;
+        CHECK (fg::setGatesFull (g, 8, 8));
+        for (int i = 0; i < fg::kNumSteps; ++i)
+        {
+            fg::Step want = base.steps[(std::size_t) i];
+            if (i >= 8 && i < 16) want.gate = 100;
+            CHECK (g.steps[(std::size_t) i] == want);                                  // ON / OFF, note, slew, ratchet, Mod and fine pitch as they were
+        }
+        CHECK (! fg::setGatesFull (g, 8, 8));                                          // nothing left to change
+        CHECK (fg::setGatesFull (g, 0, 64));
+        for (const auto& s : g.steps) CHECK (s.gate == 100);
+        fg::StepData edge = base;
+        CHECK (! fg::setGatesFull (edge, 70, 8) && ! fg::setGatesFull (edge, -9, 8) && ! fg::setGatesFull (edge, 0, 0) && edge == base);
+        CHECK (fg::setGatesFull (edge, 60, 20));                                       // runs off the end: only 60 to 63
+        for (int i = 0; i < 60; ++i) CHECK (edge.steps[(std::size_t) i] == base.steps[(std::size_t) i]);
+
+        // CLEAR RATCHETS: only the ratchet, only the span asked for
+        fg::StepData r = base;
+        r.steps[9].ratchet = 7; r.steps[20].ratchet = 3;
+        const fg::StepData rBase = r;
+        CHECK (fg::clearRatchets (r, 8, 8));
+        for (int i = 0; i < fg::kNumSteps; ++i)
+        {
+            fg::Step want = rBase.steps[(std::size_t) i];
+            if (i >= 8 && i < 16) want.ratchet = 0;
+            CHECK (r.steps[(std::size_t) i] == want);
+        }
+        CHECK (r.steps[20].ratchet == 3);
+        CHECK (fg::clearRatchets (r, 0, 64));
+        for (const auto& s : r.steps) CHECK (s.ratchet == 0);
+        CHECK (! fg::clearRatchets (r, 0, 64));
+        fg::StepData edge2 = rBase;
+        CHECK (! fg::clearRatchets (edge2, 64, 8) && ! fg::clearRatchets (edge2, -8, 8) && edge2 == rBase);
+    }
 
     // ---- step data ----
     const fg::StepData sample = fg::StepData::makeSample();

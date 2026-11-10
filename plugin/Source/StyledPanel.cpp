@@ -896,6 +896,9 @@ FractalGardenStyledPanel::FractalGardenStyledPanel (FractalGardenProcessor& p, c
     addMomentary (fg::id::reseedSlew,     "SLEW",     11.5f, { 938, 522, 58, 24 }, gold);
     addMomentary (fg::id::reseedRatchet,  "RATCHET",  11.5f, { 1002, 522, 70, 24 }, lilac);
     addMomentary (fg::id::reseedMod,      "MOD",      11.5f, { 1078, 522, 52, 24 }, white);
+    // 1.3.0: the two one-click buttons, on the card's title line (they follow the same PAGE / ALL 64 choice)
+    addMomentary (fg::id::gatesFull,      "ALL GATES 100%", 10.5f, { 898, 466, 116, 19 });
+    addMomentary (fg::id::ratchetsClear,  "CLEAR RATCHETS", 10.5f, { 1018, 466, 116, 19 });
 
     // Row 1: Length, Scale, Key, Order (with its slot), Rate, Ratio
     lengthDown.getProperties().set ("fontSize", 14.0);

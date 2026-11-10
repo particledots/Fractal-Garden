@@ -1,6 +1,6 @@
 // Offline preview and control checks (not part of the plugin; only built with -DFG_BUILD_PREVIEW=ON).
 //   1. draws the styled panel in the states of pictures A, B and C, and the plain window, to picture files;
-//   2. checks, in BOTH windows, that all 70 ids exist, each has a control, and each control moves exactly one parameter;
+//   2. checks, in BOTH windows, that all 72 ids exist, each has a control, and each control moves exactly one parameter;
 //   3. checks saving and reloading (controls, step data, tab, page, window choice), the momentary buttons popping back,
 //      the Knob Mode titles and colours, the Order slot (REPEAT ENDS / CHANCE...), and the Chance mix pop-over;
 //   4. checks that the plugin adds no MIDI while Logic is stopped, and (milestone 3) that the sequencer follows a simulated Logic
@@ -93,11 +93,11 @@ namespace
     {
         auto& ids = editor.controlledParameterIds();
         std::set<juce::String> idSet (ids.begin(), ids.end());
-        expect ((int) ids.size() == fg::kNumParameters, which + ": exactly 70 controls (" + juce::String ((int) ids.size()) + ")");
+        expect ((int) ids.size() == fg::kNumParameters, which + ": exactly 72 controls (" + juce::String ((int) ids.size()) + ")");
         expect ((int) idSet.size() == fg::kNumParameters, which + ": no parameter has two controls");
         for (const auto& spec : fg::kParams)
             expect (idSet.count (spec.id) == 1, which + ": a control for " + spec.id);
-        expect (proc.getParameters().size() == fg::kNumParameters, "the plugin exposes 70 parameters");
+        expect (proc.getParameters().size() == fg::kNumParameters, "the plugin exposes 72 parameters");
     }
 
     void resetAll (FractalGardenProcessor& p)
@@ -133,6 +133,10 @@ int main (int argc, char** argv)
     const juce::File outDir = argc > 1 ? juce::File (juce::String (argv[1])) : juce::File::getCurrentWorkingDirectory();
     outDir.createDirectory();
 
+    // The checks written before 1.3.0 expect a new instance to hold the old sample pattern; the 1.3.0 block at the end switches this off
+    // and checks the real default.
+    FractalGardenProcessor::checksStartWithSample.store (true);
+
     FractalGardenProcessor proc;
     proc.setPlayConfigDetails (0, 0, 48000.0, 512);
     proc.prepareToPlay (48000.0, 512);
@@ -140,7 +144,7 @@ int main (int argc, char** argv)
     expect (proc.getName() == "Fractal-Garden", "the plugin is called Fractal-Garden");
     expect (proc.isMidiEffect(), "it is a MIDI effect");
 
-    // ---- all 70 controls, in both windows ----
+    // ---- all 72 controls, in both windows ----
     {
         FractalGardenEditor editor (proc);
         editor.setSize (1080, 720);
@@ -1755,6 +1759,182 @@ int main (int argc, char** argv)
             if (done) done->triggerClick();
             letWindowThreadRun (60);
             expect (! panel->settingsOpen(), "DONE closes the settings page");
+        }
+    }
+
+    // -- 1.3.0: the default pattern, ALL GATES 100 % and CLEAR RATCHETS --
+    {
+        FractalGardenProcessor::checksStartWithSample.store (false);
+        MockHost host;
+        const double sr = 48000.0, pps = 120.0 / 60.0 / sr;
+        auto makeProc = [&] ()
+        {
+            auto p = std::make_unique<FractalGardenProcessor>();
+            p->setPlayConfigDetails (0, 0, sr, 512);
+            p->prepareToPlay (sr, 512);
+            p->setPlayHead (&host);
+            return p;
+        };
+        auto press = [&] (FractalGardenProcessor& p, const char* id)
+        {
+            setParam (p, id, 1);
+            letWindowThreadRun (150);          // the window thread carries it out and switches it off again
+            letWindowThreadRun (250);
+        };
+        auto isOff = [&] (FractalGardenProcessor& p, const char* id) { return p.getValueTreeState().getRawParameterValue (id)->load() < 0.5f; };
+
+        // a new instance holds the default pattern
+        {
+            auto p = makeProc();
+            expect (p->getSteps() == fg::StepData::makeDefault(), "1.3.0: a new instance starts with the default pattern (one note, gates 100 %, no ratchets)");
+            bool plain = true;
+            for (const auto& s : p->getSteps().steps)
+                plain = plain && s.on && s.note == 12 && s.gate == 100 && s.ratchet == 0 && s.slew == 0;
+            expect (plain, "1.3.0: every default step is ON, the same note, gate 100 %, ratchet x1, slew 0");
+
+            // it plays one held note: a single note-on (C3 = 60), no other note-on, no note-off while Logic plays
+            int ons = 0, offs = 0, firstNote = -1;
+            juce::AudioBuffer<float> audio (0, 512);
+            for (int b = 0; b < 400; ++b)                       // about 4 seconds, more than two passes of 8 steps
+            {
+                host.playing = true;
+                host.ppq = (double) (b * 512) * pps;
+                juce::MidiBuffer midi;
+                p->processBlock (audio, midi);
+                for (auto meta : midi)
+                {
+                    const auto m = meta.getMessage();
+                    if (m.isNoteOn()) { ++ons; if (firstNote < 0) firstNote = m.getNoteNumber(); }
+                    if (m.isNoteOff()) ++offs;
+                }
+            }
+            expect (ons == 1 && firstNote == 60 && offs == 0, "1.3.0: the default pattern plays one held C3 (" + juce::String (ons) + " note-ons, " + juce::String (offs) + " note-offs)");
+            host.playing = false;
+            int offsAfterStop = 0;
+            for (int b = 0; b < 4; ++b)
+            {
+                juce::MidiBuffer midi;
+                p->processBlock (audio, midi);
+                for (auto meta : midi) if (meta.getMessage().isNoteOff()) ++offsAfterStop;
+            }
+            expect (offsAfterStop >= 1, "1.3.0: the held note ends when Logic stops");
+
+            // UNMUTATE on an untouched new instance changes nothing; RESEED then UNMUTATE returns to the default
+            press (*p, fg::id::unmutate);
+            expect (p->getSteps() == fg::StepData::makeDefault(), "1.3.0: UNMUTATE on a new instance changes nothing");
+            setParam (*p, fg::id::reseedScope, 1);
+            press (*p, fg::id::reseedAll);
+            expect (! (p->getSteps() == fg::StepData::makeDefault()), "1.3.0: RESEED ALL changes the default pattern");
+            press (*p, fg::id::unmutate);
+            expect (p->getSteps() == fg::StepData::makeDefault(), "1.3.0: UNMUTATE after the first RESEED returns to the default pattern");
+        }
+
+        // a project saved with the old sample pattern keeps it
+        {
+            FractalGardenProcessor::checksStartWithSample.store (true);
+            juce::MemoryBlock saved;
+            { auto old = makeProc(); old->getStateInformation (saved); }
+            FractalGardenProcessor::checksStartWithSample.store (false);
+            auto p = makeProc();
+            p->setStateInformation (saved.getData(), (int) saved.getSize());
+            letWindowThreadRun (100);
+            expect (p->getSteps() == fg::StepData::makeSample(), "1.3.0: a project saved with the old starting melody opens with that melody");
+        }
+
+        // the two buttons
+        {
+            FractalGardenProcessor::checksStartWithSample.store (true);
+            auto p = makeProc();                                 // the varied sample pattern, so there is something to change
+            FractalGardenProcessor::checksStartWithSample.store (false);
+            setParam (*p, fg::id::length, 16);                   // so page 2 exists (the shown page never goes past LENGTH)
+            letWindowThreadRun (150);
+            auto st = p->getSteps().steps[9]; st.ratchet = 5; p->setStep (9, st);          // a manual edit: the UNMUTATE point
+            const fg::StepData base = p->getSteps();
+            const int rev = p->getBranchRevision();
+
+            // scope PAGE, page 2 (steps 9 to 16)
+            setParam (*p, fg::id::reseedScope, 0);
+            p->setEditorPage (1);
+            press (*p, fg::id::gatesFull);
+            {
+                const auto now = p->getSteps();
+                bool ok = true;
+                for (int i = 0; i < fg::kNumSteps; ++i)
+                {
+                    fg::Step want = base.steps[(std::size_t) i];
+                    if (i >= 8 && i < 16) want.gate = 100;
+                    ok = ok && now.steps[(std::size_t) i] == want;
+                }
+                expect (ok, "ALL GATES 100%, scope PAGE: only the gate lengths of the page shown change (ON / OFF, notes and the rest stay)");
+            }
+            expect (isOff (*p, fg::id::gatesFull), "ALL GATES 100% pops back off");
+            press (*p, fg::id::ratchetsClear);
+            {
+                const auto now = p->getSteps();
+                bool ok = true;
+                for (int i = 0; i < fg::kNumSteps; ++i)
+                {
+                    fg::Step want = base.steps[(std::size_t) i];
+                    if (i >= 8 && i < 16) { want.gate = 100; want.ratchet = 0; }
+                    ok = ok && now.steps[(std::size_t) i] == want;
+                }
+                expect (ok && base.steps[9].ratchet == 5, "CLEAR RATCHETS, scope PAGE: only the ratchets of the page shown become x1");
+            }
+            expect (isOff (*p, fg::id::ratchetsClear), "CLEAR RATCHETS pops back off");
+            expect (p->getBranchRevision() == rev, "the two buttons leave the branches as they were (like RESEED)");
+
+            // scope ALL 64
+            setParam (*p, fg::id::reseedScope, 1);
+            press (*p, fg::id::gatesFull);
+            press (*p, fg::id::ratchetsClear);
+            {
+                const auto now = p->getSteps();
+                bool ok = true;
+                for (int i = 0; i < fg::kNumSteps; ++i)
+                {
+                    fg::Step want = base.steps[(std::size_t) i];
+                    want.gate = 100; want.ratchet = 0;
+                    ok = ok && now.steps[(std::size_t) i] == want;
+                }
+                expect (ok, "scope ALL 64: every gate is 100 % and every ratchet x1, nothing else changed");
+            }
+
+            // saved with the project
+            {
+                juce::MemoryBlock saved;
+                p->getStateInformation (saved);
+                auto q = makeProc();
+                q->setStateInformation (saved.getData(), (int) saved.getSize());
+                letWindowThreadRun (100);
+                expect (q->getSteps() == p->getSteps(), "the result of the two buttons is saved with the project");
+                expect (isOff (*q, fg::id::gatesFull) && isOff (*q, fg::id::ratchetsClear), "loading a project does not press the two buttons");
+            }
+
+            // UNMUTATE undoes both
+            press (*p, fg::id::unmutate);
+            expect (p->getSteps() == base, "UNMUTATE undoes ALL GATES 100% and CLEAR RATCHETS");
+        }
+
+        // on the panel
+        {
+            FractalGardenProcessor::checksStartWithSample.store (true);
+            resetAll (proc);
+            FractalGardenEditor editor (proc);
+            editor.setSize (1080, 720);
+            auto* panel = editor.getStyledPanel();
+            auto* gates = findButton (*panel, "ALL GATES 100%");
+            auto* ratchets = findButton (*panel, "CLEAR RATCHETS");
+            expect (gates != nullptr && ratchets != nullptr, "the panel has the ALL GATES 100% and CLEAR RATCHETS buttons");
+            setParam (proc, fg::id::reseedScope, 1);
+            if (gates) gates->triggerClick();
+            if (ratchets) ratchets->triggerClick();
+            letWindowThreadRun (200);
+            bool ok = true;
+            for (const auto& s : proc.getSteps().steps) ok = ok && s.gate == 100 && s.ratchet == 0;
+            expect (ok, "clicking the two panel buttons sets every gate to 100 % and every ratchet to x1");
+            letWindowThreadRun (900);                            // let the buttons' click glow fade before the picture
+            panel->refreshNow();
+            snapshotTo (*panel, outDir.getChildFile ("fractal-garden-1-3-0.png"));
         }
     }
 

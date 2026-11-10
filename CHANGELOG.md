@@ -3,6 +3,18 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
+Version 1.3.0 (ALL GATES 100%, CLEAR RATCHETS and the new starting pattern; **built 9 November 2026, waiting for the Logic test**).
+
+- From Bryn's wish list of 9 November 2026 (items 1 to 3), approved by Bryn on 9 November 2026.
+- Two controls appended after the 70 (72 in all): `gatesFull` (id 71, "All Gates 100%") and `ratchetsClear` (id 72, "Clear Ratchets"), momentary buttons. The 70 ids and the order of every menu are unchanged.
+- Engine: `setGatesFull` and `clearRatchets` in `fg/Steps.h` / `Steps.cpp` (a span of steps: gate length to 100 %, or ratchet to x1; nothing else is touched, ON / OFF included) and `StepData::makeDefault` (every step ON, note 12 = C3 at the default settings, gate 100 %, ratchet x1, slew 0, Mod 0, fine pitch 0). `makeSample`, the old starting melody, is kept for the automatic checks only.
+- Plugin: the two buttons are counted like the other buttons and carried out on the window thread. They use RESEED SCOPE (the page the editor shows, or all 64, steps past LENGTH included), they do not move the UNMUTATE point (so UNMUTATE undoes them) and they leave the branches as they were, exactly like the RESEED buttons. Loading a project never presses them.
+- Plugin: a new instance starts with the default pattern instead of the sample melody; so does a project whose step data is missing or damaged. A project saved by an earlier version keeps the pattern it was saved with (the step data is in the project). With the default pattern and the default settings the plugin plays one held C3: the same note tied to itself sends no new note (as before, ledger G-34).
+- Panel: ALL GATES 100% and CLEAR RATCHETS on the title line of the RESEED card. The plain-slider window shows 72 controls (24 rows per column, three columns, now full).
+- No change to the saved step format (still 4), the clock, the pattern bank or the shared pattern file.
+- Manual gaps: see the project file "Fractal-Garden manual gaps ledger" (G-160 to G-164).
+- Automatic checks: engine 180,479; clock 6,406,793 (unchanged); window and plugin test 504 (new: a new instance holds the default pattern and plays one held C3 that ends when Logic stops; UNMUTATE after the first RESEED returns to it; a project saved with the old melody opens with it; each button with scope PAGE and ALL 64 changes only what it says; both are saved with the project, are not pressed by loading, leave the branches alone and are undone by UNMUTATE; both buttons exist on the panel and work when clicked).
+
 Version 1.2.0 (Range and Pitch snap; **tested in Logic on 8 November 2026: Bryn reported "truly incredible and incredibly musical"; both Range and Pitch snap work**).
 
 - Three controls appended after the 67 (70 in all): `rangeOctaves` (id 68, 1 to 5, default 2), `pitchSnap` (id 69, STEP / SEMITONES / FREE, default STEP) and `bendRange` (id 70, 1 to 24 semitones, default 2). The 67 ids and the order of every menu are unchanged.

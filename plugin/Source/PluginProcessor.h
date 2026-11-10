@@ -100,6 +100,10 @@ public:
     juce::String getSharedText() const;                     // one line for the panel: the shared file's state, or why the last SHARE / GRAB did not work
     juce::File getSharedPatternFile() const;                // the file SHARE writes and GRAB reads
     void setSharedPatternFolder (const juce::File& folder); // for the automatic checks only (the default is the Music folder)
+    // For the automatic checks only: when true, a new instance starts with the old sample pattern (what every version before 1.3.0 started
+    // with) instead of the default pattern. The plugin itself never sets it.
+    static inline std::atomic<bool> checksStartWithSample { false };
+    static fg::StepData startingSteps() { return checksStartWithSample.load() ? fg::StepData::makeSample() : fg::StepData::makeDefault(); }
     int getBranchRevision() const { return branchRevision.load(); }       // goes up whenever the branches are made again (for the automatic checks)
 
     // ---- branches (read-only, for the TREE) ----
@@ -153,6 +157,7 @@ private:
     bool regenOn (RegenEdit) const;             // the settings page's branch-regeneration filter: does this kind of edit make the branches again?
     void reseed (fg::ReseedKind);
     void reseedBranches();
+    void oneClick (bool gates);                 // 1.3.0: ALL GATES 100 % (true) or CLEAR RATCHETS (false)
     void drainMutations();
     void saveUndoToState();
     void loadUndoFromState();
@@ -235,6 +240,7 @@ private:
     int sharedTick = 0;
     std::atomic<int> pendingUnmutate { 0 }, pendingReseedAll { 0 }, pendingReseedBranches { 0 }, pendingReseedNote { 0 }, pendingReseedGate { 0 },
                      pendingReseedSlew { 0 }, pendingReseedRatchet { 0 }, pendingReseedMod { 0 };
+    std::atomic<int> pendingGatesFull { 0 }, pendingRatchetsClear { 0 };
 
     // changes the audio thread made to trunk steps, waiting for the window thread
     static constexpr int kMutationQueue = 1024;

@@ -7,13 +7,14 @@ namespace
     constexpr const char* kListened[] = {
         fg::id::reset, fg::id::rotateLeft, fg::id::rotateRight, fg::id::transposeDown, fg::id::transposeUp, fg::id::resizeShrink, fg::id::resizeExpand,
         fg::id::unmutate, fg::id::reseedAll, fg::id::reseedBranches, fg::id::reseedNote, fg::id::reseedGate, fg::id::reseedSlew,
-        fg::id::reseedRatchet, fg::id::reseedMod, fg::id::patternLoad, fg::id::patternSave, fg::id::patternShare, fg::id::patternGrab, fg::id::length };
+        fg::id::reseedRatchet, fg::id::reseedMod, fg::id::patternLoad, fg::id::patternSave, fg::id::patternShare, fg::id::patternGrab,
+        fg::id::gatesFull, fg::id::ratchetsClear, fg::id::length };
 }
 
 FractalGardenProcessor::FractalGardenProcessor()
     : AudioProcessor (BusesProperties()),                       // a MIDI effect: no audio buses
       apvts (*this, nullptr, "Parameters", FgParams::createLayout()),
-      steps (fg::StepData::makeSample())
+      steps (startingSteps())
 {
     rateParam   = apvts.getRawParameterValue (fg::id::stepRate);
     ratioParam  = apvts.getRawParameterValue (fg::id::ratio);
@@ -140,6 +141,8 @@ void FractalGardenProcessor::parameterChanged (const juce::String& parameterId, 
     else if (parameterId == fg::id::reseedSlew)     ++pendingReseedSlew;
     else if (parameterId == fg::id::reseedRatchet)  ++pendingReseedRatchet;
     else if (parameterId == fg::id::reseedMod)      ++pendingReseedMod;
+    else if (parameterId == fg::id::gatesFull)      ++pendingGatesFull;
+    else if (parameterId == fg::id::ratchetsClear)  ++pendingRatchetsClear;
 }
 
 // Rotate and Transpose change the step data, so they are carried out here, on the window thread.
@@ -163,6 +166,8 @@ void FractalGardenProcessor::applyPendingButtons()
     for (int n = pendingReseedRatchet.exchange (0); n > 0; --n)   reseed (fg::ReseedKind::Ratchet);
     for (int n = pendingReseedMod.exchange (0); n > 0; --n)       reseed (fg::ReseedKind::Mod);
     for (int n = pendingReseedBranches.exchange (0); n > 0; --n)  reseedBranches();
+    for (int n = pendingGatesFull.exchange (0); n > 0; --n)       oneClick (true);
+    for (int n = pendingRatchetsClear.exchange (0); n > 0; --n)   oneClick (false);
 }
 
 // The window thread's side of Mutate: write the changes the audio thread made to trunk steps into the saved steps.
@@ -268,6 +273,21 @@ void FractalGardenProcessor::reseed (fg::ReseedKind kind)
                 mask |= 1u << i;
         fg::reseedSteps (steps, first, count, kind, scale, reseedRng, mask,
                          juce::jlimit (fg::kMinRangeOctaves, fg::kMaxRangeOctaves, juce::roundToInt (rangeOctavesParam->load())));
+    }
+    saveStepsToState();
+}
+
+// ALL GATES 100 % and CLEAR RATCHETS (1.3.0): the same span as RESEED (the page the editor shows, or all 64), and like RESEED they change
+// the trunk for good without moving the UNMUTATE point (so UNMUTATE rolls them back) and leave the branches as they were.
+void FractalGardenProcessor::oneClick (bool gates)
+{
+    const bool page = juce::roundToInt (reseedScopeParam->load()) == 0;
+    const int first = page ? getEditorPage() * fg::kStepsPerPage : 0;
+    const int count = page ? fg::kStepsPerPage : fg::kNumSteps;
+    {
+        const juce::ScopedLock sl (stepLock);
+        if (gates) fg::setGatesFull (steps, first, count);
+        else       fg::clearRatchets (steps, first, count);
     }
     saveStepsToState();
 }
@@ -673,10 +693,10 @@ void FractalGardenProcessor::loadStepsFromState()
             }
         }
     }
-    // Nothing usable saved (a new project, or a damaged one): the sample pattern.
+    // Nothing usable saved (a new project, or a damaged one): the default pattern.
     {
         const juce::ScopedLock sl (stepLock);
-        steps = fg::StepData::makeSample();
+        steps = startingSteps();
     }
     saveStepsToState();
 }
@@ -957,6 +977,7 @@ void FractalGardenProcessor::setStateInformation (const void* data, int sizeInBy
             pendingPatternShare.store (0); pendingPatternGrab.store (0);
             pendingUnmutate.store (0); pendingReseedAll.store (0); pendingReseedBranches.store (0); pendingReseedNote.store (0);
             pendingReseedGate.store (0); pendingReseedSlew.store (0); pendingReseedRatchet.store (0); pendingReseedMod.store (0);
+            pendingGatesFull.store (0); pendingRatchetsClear.store (0);
 
             if (apvts.state.hasProperty (FgParams::kSeedProperty))
                 orderSeed.store ((std::uint32_t) (int) apvts.state.getProperty (FgParams::kSeedProperty) | 1u);

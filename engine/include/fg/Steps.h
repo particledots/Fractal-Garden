@@ -63,7 +63,12 @@ namespace fg
         std::array<Step, kNumSteps> steps;
 
         // The sample pattern the editor shows (the pattern of pictures A and B for steps 1 to 24, then varied steps).
+        // Since 1.3.0 this is no longer what a new instance starts with (see makeDefault); it is kept for the automatic checks.
         static StepData makeSample();
+
+        // What a new instance starts with since 1.3.0 (Bryn's choice, 9 Nov 2026): every step ON, the same note (octave 1, degree 0: C3 for
+        // Key C, Root 0, Base note 48), gate 100 % (tied to the next step), no ratchet, no slew, Mod 0. The first RESEED is the starting point.
+        static StepData makeDefault();
 
         // Saved form: [version][count][count x 10 bytes]. Version 4 (1.2.0) adds the fine pitch (two bytes, signed, little end first, after the
         // on / off byte); versions 1 to 3 have 8 bytes a step and open with a fine pitch of 0. Version 3 (0.5.0) stores the ratchet as an index and uses the sixteen Mod rates;
@@ -100,4 +105,13 @@ namespace fg
     // Stretch: the old step i moves to 2i and 2i+1 is an exact copy of it (the gap is filled with a repeat of the step).
     // Clone: the whole old sequence is repeated once after itself (new step L+i is a copy of step i).
     bool resizeExpand (StepData&, int& length, ResizeMethod method = ResizeMethod::Spread);
+
+    // ---- the one-click buttons of 1.3.0. Both change `count` steps from `first` for good (steps outside 0 to 63 are skipped), the same span
+    //      the RESEED buttons use (the page shown, or all 64). They return true if something changed. ----
+
+    // ALL GATES 100 %: every step's gate length becomes 100 % (a tie into the next step). ON / OFF is not touched, nor anything else.
+    bool setGatesFull (StepData&, int first, int count);
+
+    // CLEAR RATCHETS: every step's ratchet becomes x1 (no ratchet). Nothing else is touched.
+    bool clearRatchets (StepData&, int first, int count);
 }

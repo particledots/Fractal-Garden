@@ -1,6 +1,6 @@
 # Fractal-Garden: user guide
 
-For version 1.2.0. Written from the README, CHANGELOG, control list and manual-gaps ledger, nothing else.
+For version 1.3.0. Written from the README, CHANGELOG, control list and manual-gaps ledger, nothing else.
 
 ## 1. What it is
 
@@ -8,11 +8,13 @@ Fractal-Garden is a **MIDI effect** for Logic Pro: it sits in a track's MIDI FX 
 
 Words used below: a **step** is one slot in the pattern (note, length, and so on). The **trunk** is your own pattern. An **instance** is one copy of the plugin on one track. One instance plays one channel of 64 steps; for three voices, use three instances on three tracks.
 
-**How tested:** Bryn tested 1.1.0 and 1.2.0 in Logic on 8 November 2026 and reported that everything worked as described (1.2.0: "truly incredible and incredibly musical"). Earlier versions were tested item by item on 7 November 2026. The VST3 version is built every time but is only checked occasionally (in Reaper), not in Logic.
+**How tested:** version 1.3.0 (the ALL GATES 100% and CLEAR RATCHETS buttons and the new starting pattern) is built and waiting for Bryn's Logic test. Bryn tested 1.1.0 and 1.2.0 in Logic on 8 November 2026 and reported that everything worked as described (1.2.0: "truly incredible and incredibly musical"). Earlier versions were tested item by item on 7 November 2026. The VST3 version is built every time but is only checked occasionally (in Reaper), not in Logic.
 
 ## 2. What to touch first
 
 Set up: make a software instrument track, pick a sound, then in its **MIDI FX** slot choose **Audio Units > particledots > Fractal-Garden** (Logic may list it as "MIDI Controlled / particledots"). Press play in Logic. It only plays while Logic is playing, and it stays locked to Logic's bars and tempo.
+
+**A new instance starts plain (from 1.3.0):** every step is the same note (C3) with its gate at 100 % and no ratchets, so at first you hear one long held note. Set RESEED's SCOPE to **ALL 64** and press **RESEED ALL** (or RESEED: NOTE for new notes only): that is your starting point. Projects you saved before 1.3.0 open with the pattern they had.
 
 Try these in this order, while it plays:
 
@@ -54,7 +56,8 @@ The teal highlight shows the step playing. While a branch plays, the highlight h
 ## 5. Reseed and Unmutate
 
 - **RESEED** buttons throw new random values: **ALL, NOTE, GATE, SLEW, RATCHET, MOD**. They change the steps for good. **SCOPE** chooses the eight steps of the page you see (PAGE) or all 64. **RESEED: BRANCHES** gives the branches a new set of random choices and leaves the trunk alone.
-- **UNMUTATE** puts the steps and LENGTH back to the state of your last manual edit (editing a step, or changing LENGTH by hand). It undoes Mutate, Micro Mutate, Rotate, Transpose, Resize and Reseed. It does not undo RESEED: BRANCHES.
+- **ALL GATES 100%** and **CLEAR RATCHETS** (on the RESEED card's title line, from 1.3.0): one click sets every gate length to 100 %, or every ratchet to x1 (no ratchet). They use the same SCOPE as RESEED. ALL GATES 100% does not switch OFF steps on. At 100 % each step is joined to the next, so a mono synth glides from note to note without re-hitting, and the same note twice in a row is one long note.
+- **UNMUTATE** puts the steps and LENGTH back to the state of your last manual edit (editing a step, or changing LENGTH by hand). It undoes Mutate, Micro Mutate, Rotate, Transpose, Resize, Reseed, ALL GATES 100% and CLEAR RATCHETS. It does not undo RESEED: BRANCHES.
 - Editing a step sets a new point to go back to, and earlier ones can no longer be undone.
 
 Related buttons: **ROTATE** (moves the steps left or right inside LENGTH), **TRANSPOSE** (moves every note up or down one scale step), **RESIZE** (SHRINK halves LENGTH, EXPAND doubles it) and **RESET** (the next step played is step 1; it changes no steps). Rotate, Transpose and Resize change the stored steps; UNMUTATE takes them back.
@@ -90,6 +93,7 @@ Good to know:
 
 ## 8. If something sounds wrong
 
+- **A new instance plays one long note:** that is the plain starting pattern (from 1.3.0). Press RESEED ALL with SCOPE on ALL 64.
 - **Nothing plays:** Logic must be playing. The plugin makes no notes while Logic is stopped. Check the header says LOGIC PLAYING and that the instrument is on the same MIDI channel as the Settings page (default 1).
 - **Notes are all wrong or very low or high:** check SCALE, KEY, ROOT and Base note in Settings (default 48). Too high: lower Range. Slightly out of tune with FREE: check Bend range matches your instrument.
 - **No glide or no effect from Slew or Mod:** the plugin sends CC 84 and CC 1, but your instrument has to listen to them. Map them in the instrument (Smart Controls or MIDI learn), or change the CC numbers in Settings.

@@ -1,6 +1,6 @@
 // The list of controls Logic can see and automate: the 46 ids of "Fractal-Garden control list (milestone 1, approved 7 Nov 2026)",
 // then the 19 settings-page controls appended in milestone 9, then the 2 pattern-sharing buttons appended in 1.1.0, then the 3 appended in 1.2.0
-// (Range, Pitch Snap, Pitch Bend Range): 70 in all. Once a build with these ids ships, an id is NEVER renamed
+// (Range, Pitch Snap, Pitch Bend Range), then the 2 buttons appended in 1.3.0 (All Gates 100%, Clear Ratchets): 72 in all. Once a build with these ids ships, an id is NEVER renamed
 // or removed, a menu's choices keep their order, and new controls are only appended at the end of kParams.
 //
 // This file is the single source for the plugin: the wrapper builds its parameters from kParams, the panel and the plain-slider
@@ -19,8 +19,8 @@ namespace fg
     inline constexpr int kNumSteps     = 64;
     inline constexpr int kStepsPerPage = 8;
     inline constexpr int kNumPages     = 8;
-    inline constexpr int kNumParameters = 70;
-    inline constexpr int kNumOriginalParameters = 46;       // the control list of milestone 1; the 24 after them are the settings page (19), pattern sharing (2) and the three of 1.2.0
+    inline constexpr int kNumParameters = 72;
+    inline constexpr int kNumOriginalParameters = 46;       // the control list of milestone 1; the 26 after them are the settings page (19), pattern sharing (2), the three of 1.2.0 and the two of 1.3.0
 
     // ---- the ids (these strings are what Logic stores in projects and automation) ----
     namespace id
@@ -98,6 +98,9 @@ namespace fg
         inline constexpr const char* rangeOctaves   = "rangeOctaves";
         inline constexpr const char* pitchSnap      = "pitchSnap";
         inline constexpr const char* bendRange      = "bendRange";
+        // ---- appended in 1.3.0: two one-click buttons for the gates and the ratchets ----
+        inline constexpr const char* gatesFull      = "gatesFull";
+        inline constexpr const char* ratchetsClear  = "ratchetsClear";
     }
 
     // ---- the menus (the ORDER of each list is frozen) ----
@@ -174,7 +177,7 @@ namespace fg
     inline constexpr int kDefaultBendRange = 2;
     inline constexpr int kMaxBendRange = 24;
 
-    // ---- the 70 controls: the 46 of the control list, the 19 of the settings page, the 2 of pattern sharing, then the 3 of 1.2.0 ----
+    // ---- the 72 controls: the 46 of the control list, the 19 of the settings page, the 2 of pattern sharing, the 3 of 1.2.0, then the 2 of 1.3.0 ----
     enum class Kind { Knob, Int, Choice, Toggle, Momentary };
 
     struct ParamSpec
@@ -265,6 +268,9 @@ namespace fg
         { id::rangeOctaves,   "Range Octaves",           Kind::Int,       kMinRangeOctaves, kMaxRangeOctaves, kDefaultRangeOctaves, nullptr, 0 },
         { id::pitchSnap,      "Pitch Snap",              Kind::Choice,    0, kNumPitchSnaps - 1, 0, kPitchSnapNames, kNumPitchSnaps },
         { id::bendRange,      "Pitch Bend Range",        Kind::Int,       1, kMaxBendRange, kDefaultBendRange, nullptr, 0 },
+        // ---- appended in 1.3.0: one-click buttons (they follow Reseed Scope; Unmutate undoes them) ----
+        { id::gatesFull,      "All Gates 100%",          Kind::Momentary, 0, 1,  0, nullptr, 0 },
+        { id::ratchetsClear,  "Clear Ratchets",          Kind::Momentary, 0, 1,  0, nullptr, 0 },
     };
 
     // The spec for an id, or nullptr if there is no such control.

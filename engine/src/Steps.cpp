@@ -95,6 +95,39 @@ StepData StepData::makeSample()
     return d;
 }
 
+StepData StepData::makeDefault()
+{
+    StepData d;
+    for (auto& s : d.steps)
+    {
+        s = Step();                 // note 12 (C3 at the default settings), ON, no slew, no ratchet, Mod 0
+        s.gate = kGateMax;
+    }
+    return d;
+}
+
+bool setGatesFull (StepData& d, int first, int count)
+{
+    bool changed = false;
+    for (int i = std::max (0, first); i < std::min (kNumSteps, first + count); ++i)
+    {
+        auto& s = d.steps[(std::size_t) i];
+        if (s.gate != kGateMax) { s.gate = kGateMax; changed = true; }
+    }
+    return changed;
+}
+
+bool clearRatchets (StepData& d, int first, int count)
+{
+    bool changed = false;
+    for (int i = std::max (0, first); i < std::min (kNumSteps, first + count); ++i)
+    {
+        auto& s = d.steps[(std::size_t) i];
+        if (s.ratchet != 0) { s.ratchet = 0; changed = true; }
+    }
+    return changed;
+}
+
 std::vector<std::uint8_t> StepData::toBytes() const
 {
     std::vector<std::uint8_t> out;
