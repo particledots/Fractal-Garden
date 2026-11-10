@@ -8,7 +8,7 @@ Fractal-Garden is a **MIDI effect** for Logic Pro: it sits in a track's MIDI FX 
 
 Words used below: a **step** is one slot in the pattern (note, length, and so on). The **trunk** is your own pattern. An **instance** is one copy of the plugin on one track. One instance plays one channel of 64 steps; for three voices, use three instances on three tracks.
 
-**How tested:** version 1.3.0 (the ALL GATES 100% and CLEAR RATCHETS buttons and the new starting pattern) was tested by Bryn in Logic on 9 November 2026 and worked. Bryn tested 1.1.0 and 1.2.0 in Logic on 8 November 2026 and reported that everything worked as described (1.2.0: "truly incredible and incredibly musical"). Earlier versions were tested item by item on 7 November 2026. The VST3 version is built every time but is only checked occasionally (in Reaper), not in Logic.
+**How tested:** version 1.3.0 (the ALL GATES 100% and CLEAR RATCHETS buttons and the new starting pattern) was tested by Bryn in Logic on both Macs on 9 November 2026 and worked. Bryn tested 1.1.0 and 1.2.0 in Logic on 8 November 2026 and reported that everything worked as described (1.2.0: "truly incredible and incredibly musical"). Earlier versions were tested item by item on 7 November 2026. The VST3 version is built every time but is only checked occasionally (in Reaper), not in Logic.
 
 ## 2. What to touch first
 

@@ -3,7 +3,7 @@
 The detailed notes for each milestone, newest first. A version is listed as tested only after it has been tested in Logic on both
 test Macs and worked as described. The README describes the current version.
 
-Version 1.3.0 (ALL GATES 100%, CLEAR RATCHETS and the new starting pattern; **tested in Logic on 9 November 2026: "this is GREAT...it works like a dream...the 100% gate default works as i wanted it to", finished**).
+Version 1.3.0 (ALL GATES 100%, CLEAR RATCHETS and the new starting pattern; **tested in Logic on both Macs on 9 November 2026: "this is GREAT...it works like a dream...the 100% gate default works as i wanted it to", finished**).
 
 - From Bryn's wish list of 9 November 2026 (items 1 to 3), approved by Bryn on 9 November 2026.
 - Two controls appended after the 70 (72 in all): `gatesFull` (id 71, "All Gates 100%") and `ratchetsClear` (id 72, "Clear Ratchets"), momentary buttons. The 70 ids and the order of every menu are unchanged.
