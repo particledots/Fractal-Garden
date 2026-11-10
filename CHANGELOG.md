@@ -12,8 +12,9 @@ Version 1.3.0 (ALL GATES 100%, CLEAR RATCHETS and the new starting pattern; **bu
 - Plugin: a new instance starts with the default pattern instead of the sample melody; so does a project whose step data is missing or damaged. A project saved by an earlier version keeps the pattern it was saved with (the step data is in the project). With the default pattern and the default settings the plugin plays one held C3: the same note tied to itself sends no new note (as before, ledger G-34).
 - Panel: ALL GATES 100% and CLEAR RATCHETS on the title line of the RESEED card. The plain-slider window shows 72 controls (24 rows per column, three columns, now full).
 - No change to the saved step format (still 4), the clock, the pattern bank or the shared pattern file.
-- Manual gaps: see the project file "Fractal-Garden manual gaps ledger" (G-160 to G-164).
+- Manual gaps: see the project file "Fractal-Garden manual gaps ledger" (G-160 to G-165; G-87 and G-159 revised).
 - Automatic checks: engine 180,479; clock 6,406,793 (unchanged); window and plugin test 504 (new: a new instance holds the default pattern and plays one held C3 that ends when Logic stops; UNMUTATE after the first RESEED returns to it; a project saved with the old melody opens with it; each button with scope PAGE and ALL 64 changes only what it says; both are saved with the project, are not pressed by loading, leave the branches alone and are undone by UNMUTATE; both buttons exist on the panel and work when clicked).
+- GitHub run 42727039093 (commit 5d42445, 9 November 2026 Phoenix time): green. Engine self-test and the macOS build of AU + VST3 with its checks and package passed; private draft release test-build-27. The window and plugin test (504 checks) was run on a Linux computer with a virtual screen and passed.
 
 Version 1.2.0 (Range and Pitch snap; **tested in Logic on 8 November 2026: Bryn reported "truly incredible and incredibly musical"; both Range and Pitch snap work**).
 
